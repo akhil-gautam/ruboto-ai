@@ -13,13 +13,15 @@ module Ruboto
   API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
   MODELS = [
-    { id: "openai/gpt-4o", name: "GPT-4o", desc: "OpenAI flagship" },
-    { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", desc: "Fast & cheap" },
-    { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", desc: "Anthropic's latest" },
-    { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet", desc: "Great for code" },
-    { id: "google/gemini-2.0-flash-001", name: "Gemini 2.0 Flash", desc: "Google's fast model" },
-    { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B", desc: "Open source" },
-    { id: "deepseek/deepseek-chat", name: "DeepSeek Chat", desc: "Strong reasoning" }
+    { id: "anthropic/claude-sonnet-4.5", name: "Claude Sonnet 4.5", desc: "Anthropic's best" },
+    { id: "google/gemini-3-flash-preview", name: "Gemini 3 Flash", desc: "Google's latest" },
+    { id: "deepseek/deepseek-v3.2", name: "DeepSeek v3.2", desc: "Strong reasoning" },
+    { id: "x-ai/grok-code-fast-1", name: "Grok Code Fast", desc: "xAI coding model" },
+    { id: "minimax/minimax-m2.1", name: "MiniMax M2.1", desc: "Versatile model" },
+    { id: "bytedance-seed/seed-1.6", name: "Seed 1.6", desc: "ByteDance model" },
+    { id: "z-ai/glm-4.7", name: "GLM 4.7", desc: "Zhipu AI model" },
+    { id: "xiaomi/mimo-v2-flash:free", name: "MiMo v2 Flash", desc: "Xiaomi (free)" },
+    { id: "liquid/lfm-2.5-1.2b-thinking:free", name: "LFM 2.5 Thinking", desc: "Liquid (free)" }
   ].freeze
 
   # ANSI colors
@@ -853,20 +855,28 @@ module Ruboto
       end
 
       puts
-      print "    #{DIM}Enter number (1-#{MODELS.length}):#{RESET} "
+      puts "    #{DIM}Or enter any OpenRouter model ID (e.g., openai/gpt-4o)#{RESET}"
+      puts
+      print "    #{DIM}Choice:#{RESET} "
 
       loop do
         input = gets&.strip
         return MODELS[0][:id] if input.nil? || input.empty?
 
+        # Check if it's a number selection
         num = input.to_i
         if num >= 1 && num <= MODELS.length
           selected = MODELS[num - 1]
           puts "\n    #{GREEN}✓#{RESET} Using #{BOLD}#{selected[:name]}#{RESET}"
           puts
           return selected[:id]
+        elsif input.include?("/")
+          # Custom model ID (contains slash like "openai/gpt-4o")
+          puts "\n    #{GREEN}✓#{RESET} Using #{BOLD}#{input}#{RESET}"
+          puts
+          return input
         else
-          print "    #{RED}Invalid choice.#{RESET} Enter 1-#{MODELS.length}: "
+          print "    #{RED}Invalid.#{RESET} Enter 1-#{MODELS.length} or a model ID: "
         end
       end
     end

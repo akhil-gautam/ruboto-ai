@@ -62,15 +62,19 @@ $ ruboto-ai
 
                           Select a model:
 
-    1. GPT-4o          OpenAI flagship
-    2. GPT-4o Mini     Fast & cheap
-    3. Claude Sonnet 4 Anthropic's latest
-    4. Claude 3.5 Sonnet Great for code
-    5. Gemini 2.0 Flash Google's fast model
-    6. Llama 3.3 70B   Open source
-    7. DeepSeek Chat   Strong reasoning
+    1. Claude Sonnet 4.5  Anthropic's best
+    2. Gemini 3 Flash     Google's latest
+    3. DeepSeek v3.2      Strong reasoning
+    4. Grok Code Fast     xAI coding model
+    5. MiniMax M2.1       Versatile model
+    6. Seed 1.6           ByteDance model
+    7. GLM 4.7            Zhipu AI model
+    8. MiMo v2 Flash      Xiaomi (free)
+    9. LFM 2.5 Thinking   Liquid (free)
 
-    Enter number (1-7):
+    Or enter any OpenRouter model ID (e.g., openai/gpt-4o)
+
+    Choice:
 ```
 
 Select a model by number, then start chatting.
@@ -179,15 +183,29 @@ Added try/catch with proper error handling. Tests still pass.
 
 ## Supported Models
 
+### Default Models
+
 | Model | Provider | Best For |
 |-------|----------|----------|
-| GPT-4o | OpenAI | General coding tasks |
-| GPT-4o Mini | OpenAI | Fast, cheap tasks |
-| Claude Sonnet 4 | Anthropic | Complex reasoning |
-| Claude 3.5 Sonnet | Anthropic | Code generation |
-| Gemini 2.0 Flash | Google | Fast responses |
-| Llama 3.3 70B | Meta | Open source option |
-| DeepSeek Chat | DeepSeek | Strong reasoning |
+| Claude Sonnet 4.5 | Anthropic | Best overall |
+| Gemini 3 Flash | Google | Fast responses |
+| DeepSeek v3.2 | DeepSeek | Strong reasoning |
+| Grok Code Fast | xAI | Code generation |
+| MiniMax M2.1 | MiniMax | Versatile tasks |
+| Seed 1.6 | ByteDance | General purpose |
+| GLM 4.7 | Zhipu AI | Chinese + English |
+| MiMo v2 Flash | Xiaomi | Free tier |
+| LFM 2.5 Thinking | Liquid | Free tier |
+
+### Custom Models
+
+You can use **any model** from [OpenRouter](https://openrouter.ai/models) by entering its ID directly:
+
+```
+Choice: openai/gpt-4o
+Choice: meta-llama/llama-3.3-70b-instruct
+Choice: mistralai/mistral-large
+```
 
 ## Data Storage
 
