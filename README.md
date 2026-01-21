@@ -22,7 +22,7 @@ gem install ruboto-ai
 ### From Source
 
 ```bash
-git clone https://github.com/akhilgautam/ruboto-ai.git
+git clone https://github.com/akhil-gautam/ruboto-ai.git
 cd ruboto-ai
 gem build ruboto.gemspec
 gem install ruboto-ai-0.1.0.gem
@@ -225,7 +225,7 @@ Ruboto stores data in `~/.ruboto/`:
 
 ```bash
 # Clone the repo
-git clone https://github.com/akhilgautam/ruboto-ai.git
+git clone https://github.com/akhil-gautam/ruboto-ai.git
 cd ruboto-ai
 
 # Run directly without installing

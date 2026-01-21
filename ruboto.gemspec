@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
 
   spec.summary = "Minimal agentic coding assistant for the terminal"
   spec.description = "A fast, autonomous coding assistant built in Ruby, powered by multiple LLM providers via OpenRouter API. Features agentic tools for file manipulation, command execution, and codebase exploration."
-  spec.homepage = "https://github.com/akhilgautam/ruboto-ai"
+  spec.homepage = "https://github.com/akhil-gautam/ruboto-ai"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.0.0"
 
