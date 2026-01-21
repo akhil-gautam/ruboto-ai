@@ -1,0 +1,29 @@
+# Gem artifacts
+*.gem
+pkg/
+
+# Bundle artifacts
+.bundle/
+vendor/bundle/
+
+# IDE/editor files
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Temp files
+tmp/
+*.tmp
+
+# Exclude from gem
+.claude/
+docs/
