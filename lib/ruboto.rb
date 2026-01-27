@@ -915,6 +915,7 @@ module Ruboto
     end
 
     def recent_tasks(limit = 10)
+      limit = limit.to_i.clamp(1, 100)
       sql = "SELECT request, outcome, success, created_at FROM tasks ORDER BY id DESC LIMIT #{limit};"
       run_sql(sql)
     end
@@ -923,6 +924,7 @@ module Ruboto
       escaped_key = key.gsub("'", "''")
       escaped_value = value.gsub("'", "''")
       escaped_source = source.gsub("'", "''")
+      confidence = confidence.to_f.clamp(0.0, 1.0)
 
       sql = "INSERT INTO profile (key, value, confidence, source, updated_at) " \
             "VALUES ('#{escaped_key}', '#{escaped_value}', #{confidence}, '#{escaped_source}', datetime('now')) " \
@@ -985,18 +987,21 @@ module Ruboto
     end
 
     def get_patterns(min_confidence = 0.5)
+      min_confidence = min_confidence.to_f.clamp(0.0, 1.0)
       sql = "SELECT pattern_type, description, conditions, frequency, confidence FROM patterns " \
             "WHERE confidence >= #{min_confidence} ORDER BY confidence DESC;"
       run_sql(sql)
     end
 
     def reinforce_pattern(id)
+      id = id.to_i
       sql = "UPDATE patterns SET frequency = frequency + 1, " \
             "confidence = MIN(1.0, confidence + 0.1), updated_at = datetime('now') WHERE id=#{id};"
       run_sql(sql)
     end
 
     def weaken_pattern(id)
+      id = id.to_i
       sql = "UPDATE patterns SET confidence = MAX(0.0, confidence - 0.1), updated_at = datetime('now') WHERE id=#{id};"
       run_sql(sql)
     end
@@ -1325,6 +1330,7 @@ module Ruboto
 
           # Track tools used in this interaction
           interaction_tools = []
+          task_success = true
 
           # Agentic loop
           loop do
@@ -1334,6 +1340,7 @@ module Ruboto
 
             if response["error"]
               puts "#{RED}⏺ API Error: #{response["error"]["message"]}#{RESET}"
+              task_success = false
               break
             end
 
@@ -1341,6 +1348,7 @@ module Ruboto
             choice = response.dig("choices", 0)
             unless choice
               puts "#{RED}⏺ Error: No response from model#{RESET}"
+              task_success = false
               break
             end
 
@@ -1392,12 +1400,12 @@ module Ruboto
 
           # Save task to episodic memory
           unless interaction_tools.empty?
-            last_text = messages.reverse.find { |m| m["content"] || m[:content] }&.then { |m| m["content"] || m[:content] }
+            last_text = messages.reverse.find { |m| (m["role"] || m[:role]) == "assistant" && (m["content"] || m[:content]) }&.then { |m| m["content"] || m[:content] }
             save_task(
               user_input,
               (last_text || "")[0, 200],
               interaction_tools.uniq.join(", "),
-              true,
+              task_success,
               session_id
             )
           end
