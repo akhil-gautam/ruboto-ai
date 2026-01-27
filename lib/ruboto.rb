@@ -756,6 +756,49 @@ module Ruboto
           working_dir TEXT,
           created_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          request TEXT NOT NULL,
+          outcome TEXT,
+          tools_used TEXT,
+          success INTEGER,
+          session_id TEXT,
+          working_dir TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS profile (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          confidence REAL DEFAULT 1.0,
+          source TEXT DEFAULT 'explicit',
+          updated_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(key)
+        );
+
+        CREATE TABLE IF NOT EXISTS workflows (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          trigger TEXT NOT NULL,
+          steps TEXT NOT NULL,
+          frequency INTEGER DEFAULT 0,
+          last_run TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(name)
+        );
+
+        CREATE TABLE IF NOT EXISTS patterns (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          pattern_type TEXT NOT NULL,
+          description TEXT NOT NULL,
+          conditions TEXT,
+          frequency INTEGER DEFAULT 1,
+          confidence REAL DEFAULT 0.5,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
       SQL
 
       run_sql(schema)
