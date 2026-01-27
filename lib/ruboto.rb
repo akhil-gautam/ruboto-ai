@@ -1163,6 +1163,7 @@ module Ruboto
 
     def run
       ensure_db_exists
+      detect_patterns
       load_readline_history
       print_startup
 
@@ -1170,6 +1171,9 @@ module Ruboto
       model = select_model
 
       session_id = Time.now.strftime("%Y%m%d_%H%M%S")
+
+      suggestions = check_triggers
+      print_suggestions(suggestions)
 
       # Build memory context
       profile_data = get_profile
@@ -1249,6 +1253,21 @@ module Ruboto
 
           break if user_input.nil?
           next if user_input.empty?
+
+          # Handle suggestion selection
+          unless suggestions.empty?
+            if user_input.match?(/\A\d+\z/)
+              action = handle_suggestion_input(user_input, suggestions)
+              if action
+                user_input = action
+                puts "  #{GREEN}✓#{RESET} #{action}"
+              end
+            else
+              weaken_all_suggestions(suggestions)
+            end
+            suggestions = []
+          end
+
           break if ["/q", "exit"].include?(user_input)
 
           if user_input == "/c"
