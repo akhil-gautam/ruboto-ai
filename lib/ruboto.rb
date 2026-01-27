@@ -1039,6 +1039,8 @@ module Ruboto
           #{BOLD}/c#{RESET}        #{DIM}clear conversation context#{RESET}
           #{BOLD}/h#{RESET}        #{DIM}show this help#{RESET}
           #{BOLD}/history#{RESET}  #{DIM}show recent commands#{RESET}
+          #{BOLD}/profile#{RESET}  #{DIM}view/set profile (set <key> <val>, del <key>)#{RESET}
+          #{BOLD}/teach#{RESET}    #{DIM}teach workflows (/teach name when <trigger> do <steps>)#{RESET}
       HELP
     end
 
@@ -1112,6 +1114,85 @@ module Ruboto
 
           if user_input == "/h" || user_input == "/help"
             print_help
+            next
+          end
+
+          if user_input.start_with?("/profile")
+            parts = user_input.split(" ", 3)
+            subcommand = parts[1]
+
+            case subcommand
+            when "set"
+              # /profile set key value
+              key_value = user_input.sub("/profile set ", "").split(" ", 2)
+              if key_value.length == 2
+                set_profile(key_value[0], key_value[1])
+                puts "#{GREEN}✓#{RESET} Set #{BOLD}#{key_value[0]}#{RESET} = #{key_value[1]}"
+              else
+                puts "#{RED}Usage: /profile set <key> <value>#{RESET}"
+              end
+            when "del", "delete"
+              key = parts[2]
+              if key
+                delete_profile(key)
+                puts "#{GREEN}✓#{RESET} Deleted #{BOLD}#{key}#{RESET}"
+              else
+                puts "#{RED}Usage: /profile del <key>#{RESET}"
+              end
+            else
+              # /profile (list all)
+              data = get_profile
+              if data.empty?
+                puts "#{DIM}No profile data yet. Use /profile set <key> <value> to add.#{RESET}"
+              else
+                puts "#{CYAN}Your Profile:#{RESET}"
+                data.split("\n").each do |row|
+                  cols = row.split("|")
+                  next if cols.length < 2
+                  puts "  #{BOLD}#{cols[0]}#{RESET} = #{cols[1]} #{DIM}(#{cols[3] || 'explicit'}, confidence: #{cols[2] || '1.0'})#{RESET}"
+                end
+              end
+            end
+            next
+          end
+
+          if user_input.start_with?("/teach")
+            rest = user_input.sub("/teach", "").strip
+
+            if rest.empty?
+              # List existing workflows
+              data = get_workflows
+              if data.empty?
+                puts "#{DIM}No workflows yet. Teach me with: /teach <name> when <trigger> do <step1>, <step2>, ...#{RESET}"
+              else
+                puts "#{CYAN}Learned Workflows:#{RESET}"
+                data.split("\n").each do |row|
+                  cols = row.split("|")
+                  next if cols.length < 3
+                  puts "  #{BOLD}#{cols[0]}#{RESET}"
+                  puts "    #{DIM}Trigger:#{RESET} #{cols[1]}"
+                  puts "    #{DIM}Steps:#{RESET} #{cols[2]}"
+                  puts "    #{DIM}Used #{cols[3] || 0} times#{RESET}"
+                end
+              end
+            elsif rest.include?(" when ") && rest.include?(" do ")
+              # /teach <name> when <trigger> do <steps>
+              match = rest.match(/\A(.+?)\s+when\s+(.+?)\s+do\s+(.+)\z/)
+              if match
+                name = match[1].strip
+                trigger = match[2].strip
+                steps = match[3].strip
+                save_workflow(name, trigger, steps)
+                puts "#{GREEN}✓#{RESET} Learned workflow #{BOLD}#{name}#{RESET}"
+                puts "  #{DIM}When:#{RESET} #{trigger}"
+                puts "  #{DIM}Do:#{RESET} #{steps}"
+              else
+                puts "#{RED}Usage: /teach <name> when <trigger> do <step1>, <step2>, ...#{RESET}"
+              end
+            else
+              puts "#{RED}Usage: /teach <name> when <trigger> do <step1>, <step2>, ...#{RESET}"
+              puts "#{DIM}Example: /teach weekly-report when \"weekly report\" do pull CRM data, format summary, email to team#{RESET}"
+            end
             next
           end
 
