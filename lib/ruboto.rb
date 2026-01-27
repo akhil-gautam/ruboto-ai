@@ -104,6 +104,9 @@ module Ruboto
       when "patch"
         path = args["path"] || "file"
         "Patching #{File.basename(path)}"
+      when "memory"
+        action = args["action"] || "access"
+        "Memory: #{action.tr('_', ' ')}"
       else
         name.capitalize.to_s
       end
@@ -458,6 +461,49 @@ module Ruboto
       "error: #{e.message}"
     end
 
+    def tool_memory(args)
+      action = args["action"]
+      case action
+      when "get_profile"
+        result = get_profile
+        result.empty? ? "No profile data stored." : "User profile:\n#{result}"
+
+      when "set_profile"
+        key = args["key"]
+        value = args["value"]
+        confidence = args["confidence"] || 0.8
+        return "error: key and value required" unless key && value
+        set_profile(key, value, confidence, "inferred")
+        "Stored: #{key} = #{value}"
+
+      when "get_workflows"
+        result = get_workflows
+        result.empty? ? "No workflows stored." : "Known workflows:\n#{result}"
+
+      when "find_workflow"
+        query = args["query"]
+        return "error: query required" unless query
+        result = find_workflow(query)
+        result.empty? ? "No matching workflows." : "Matching workflows:\n#{result}"
+
+      when "get_tasks"
+        result = recent_tasks(args["limit"] || 10)
+        result.empty? ? "No task history." : "Recent tasks:\n#{result}"
+
+      when "save_fact"
+        key = args["key"]
+        value = args["value"]
+        return "error: key and value required" unless key && value
+        set_profile(key, value, args["confidence"] || 0.7, "inferred")
+        "Learned: #{key} = #{value}"
+
+      else
+        "error: unknown action '#{action}'. Use: get_profile, set_profile, get_workflows, find_workflow, get_tasks, save_fact"
+      end
+    rescue => e
+      "error: #{e.message}"
+    end
+
     # --- Tool definitions ---
 
     def tools
@@ -641,6 +687,30 @@ module Ruboto
                 diff: { type: "string", description: "Unified diff format (like git diff output)" }
               },
               required: ["path", "diff"]
+            }
+          }
+        },
+        "memory" => {
+          impl: method(:tool_memory),
+          schema: {
+            type: "function",
+            name: "memory",
+            description: "Access the user's persistent memory. Use to recall profile info, find learned workflows, check task history, or save new facts about the user.",
+            parameters: {
+              type: "object",
+              properties: {
+                action: {
+                  type: "string",
+                  description: "Action: get_profile, set_profile, get_workflows, find_workflow, get_tasks, save_fact",
+                  enum: ["get_profile", "set_profile", "get_workflows", "find_workflow", "get_tasks", "save_fact"]
+                },
+                key: { type: "string", description: "Profile key (for set_profile, save_fact)" },
+                value: { type: "string", description: "Profile value (for set_profile, save_fact)" },
+                confidence: { type: "number", description: "Confidence 0.0-1.0 (for save_fact, default 0.7)" },
+                query: { type: "string", description: "Search query (for find_workflow)" },
+                limit: { type: "integer", description: "Max results (for get_tasks, default 10)" }
+              },
+              required: ["action"]
             }
           }
         }
