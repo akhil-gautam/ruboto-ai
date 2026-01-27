@@ -8,6 +8,8 @@ require "readline"
 require "open3"
 
 require_relative "ruboto/version"
+require_relative "ruboto/osascript"
+require_relative "ruboto/safety"
 
 module Ruboto
   API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -66,6 +68,9 @@ module Ruboto
   ].freeze
 
   class << self
+    include Osascript
+    include Safety
+
     # Human-readable tool action messages
     def tool_message(name, args)
       case name
