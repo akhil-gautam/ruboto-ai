@@ -24,6 +24,9 @@ coverage/
 tmp/
 *.tmp
 
+# Build artifacts
+macos/RubotoBar/build/
+
 # Exclude from gem
 .claude/
 docs/
