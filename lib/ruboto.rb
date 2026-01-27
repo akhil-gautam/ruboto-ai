@@ -16,6 +16,7 @@ require_relative "ruboto/intelligence/pattern_detector"
 require_relative "ruboto/intelligence/proactive_triggers"
 require_relative "ruboto/intelligence/task_planner"
 require_relative "ruboto/intelligence/briefings"
+require_relative "ruboto/scheduler"
 
 module Ruboto
   API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -82,6 +83,7 @@ module Ruboto
     include Intelligence::ProactiveTriggers
     include Intelligence::TaskPlanner
     include Intelligence::Briefings
+    include Scheduler
 
     # Human-readable tool action messages
     def tool_message(name, args)
