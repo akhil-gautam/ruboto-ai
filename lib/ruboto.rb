@@ -10,6 +10,8 @@ require "open3"
 require_relative "ruboto/version"
 require_relative "ruboto/osascript"
 require_relative "ruboto/safety"
+require_relative "ruboto/tools/macos_auto"
+require_relative "ruboto/tools/browser"
 
 module Ruboto
   API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -70,6 +72,8 @@ module Ruboto
   class << self
     include Osascript
     include Safety
+    include Tools::MacosAuto
+    include Tools::Browser
 
     # Human-readable tool action messages
     def tool_message(name, args)
@@ -112,6 +116,12 @@ module Ruboto
       when "memory"
         action = args["action"] || "access"
         "Memory: #{action.tr('_', ' ')}"
+      when "macos_auto"
+        action = args["action"] || "action"
+        "macOS: #{action.tr('_', ' ')}"
+      when "browser"
+        action = args["action"] || "action"
+        "Safari: #{action.tr('_', ' ')}"
       else
         name.capitalize.to_s
       end
@@ -718,6 +728,14 @@ module Ruboto
               required: ["action"]
             }
           }
+        },
+        "macos_auto" => {
+          impl: method(:tool_macos_auto),
+          schema: macos_auto_schema
+        },
+        "browser" => {
+          impl: method(:tool_browser),
+          schema: browser_schema
         }
       }
     end
@@ -1114,6 +1132,11 @@ module Ruboto
           #{DIM}•#{RESET} "Add error handling to tool_read"
           #{DIM}•#{RESET} "Run the tests and fix any failures"
 
+        #{CYAN}Capabilities:#{RESET}
+          #{DIM}•#{RESET} Code: read, write, edit, search, run commands
+          #{DIM}•#{RESET} macOS: calendar, reminders, email, notes, clipboard, notifications
+          #{DIM}•#{RESET} Safari: open URLs, read pages, fill forms, click elements
+
         #{CYAN}Commands:#{RESET}
           #{BOLD}/q#{RESET}        #{DIM}quit#{RESET}
           #{BOLD}/c#{RESET}        #{DIM}clear conversation context#{RESET}
@@ -1146,13 +1169,15 @@ module Ruboto
       memory_summary += "RECENT TASKS:\n#{recent}\n\n" unless recent.empty?
 
       system_prompt = <<~PROMPT
-        You are a fast, autonomous coding assistant. Working directory: #{Dir.pwd}
+        You are a fast, autonomous assistant with coding AND system automation powers. Working directory: #{Dir.pwd}
 
         #{memory_summary.empty? ? "" : "MEMORY (what you know about this user):\n#{memory_summary}"}
 
         TOOL HIERARCHY - Use highest-level tool that fits:
 
         1. META-TOOLS (prefer these):
+           - macos_auto: Control macOS apps (calendar, reminders, mail, notes, clipboard, notifications)
+           - browser: Interact with Safari (open URLs, read pages, fill forms, click, run JS)
            - explore: Answer "where is X?" / "how does Y work?" questions
            - patch: Multi-line edits using unified diff format
            - verify: Check if command succeeds (use after code changes)
@@ -1176,6 +1201,13 @@ module Ruboto
         - When the user describes a repeated workflow, suggest saving it
         - Check memory at start of complex tasks for relevant context
         - Use task history to avoid repeating past failures
+
+        ACTION RULES:
+        - Use macos_auto to open apps, check calendar, create reminders, send emails, create notes, manage clipboard
+        - Use browser to open URLs, read page content, fill forms, click buttons, extract links
+        - Chain actions naturally: check calendar → draft email → send it
+        - mail_send and browser run_js require user confirmation — just call the tool, user will be prompted
+        - If an action fails (app not running, permission denied), report the error and suggest alternatives
 
         CRITICAL - BASH TOOL RULES:
         - ONLY use bash for executable commands: git, npm, python, node, ls, etc.
