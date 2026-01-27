@@ -1111,6 +1111,7 @@ module Ruboto
           #{BOLD}/history#{RESET}  #{DIM}show recent commands#{RESET}
           #{BOLD}/profile#{RESET}  #{DIM}view/set profile (set <key> <val>, del <key>)#{RESET}
           #{BOLD}/teach#{RESET}    #{DIM}teach workflows (/teach name when <trigger> do <steps>)#{RESET}
+          #{BOLD}/tasks#{RESET}    #{DIM}show recent task history (/tasks <count>)#{RESET}
       HELP
     end
 
@@ -1124,8 +1125,20 @@ module Ruboto
 
       session_id = Time.now.strftime("%Y%m%d_%H%M%S")
 
+      # Build memory context
+      profile_data = get_profile
+      workflow_data = get_workflows
+      recent = recent_tasks(5)
+
+      memory_summary = ""
+      memory_summary += "USER PROFILE:\n#{profile_data}\n\n" unless profile_data.empty?
+      memory_summary += "KNOWN WORKFLOWS:\n#{workflow_data}\n\n" unless workflow_data.empty?
+      memory_summary += "RECENT TASKS:\n#{recent}\n\n" unless recent.empty?
+
       system_prompt = <<~PROMPT
         You are a fast, autonomous coding assistant. Working directory: #{Dir.pwd}
+
+        #{memory_summary.empty? ? "" : "MEMORY (what you know about this user):\n#{memory_summary}"}
 
         TOOL HIERARCHY - Use highest-level tool that fits:
 
@@ -1133,6 +1146,7 @@ module Ruboto
            - explore: Answer "where is X?" / "how does Y work?" questions
            - patch: Multi-line edits using unified diff format
            - verify: Check if command succeeds (use after code changes)
+           - memory: Read/write persistent user memory (profile, workflows, task history)
 
         2. PRIMITIVES (when meta-tools don't fit):
            - read/write/edit: Single, targeted file operations
@@ -1146,6 +1160,12 @@ module Ruboto
         - If verify fails → read the error, fix it, verify again
         - Keep using tools until you have a complete answer
         - Only ask questions when genuinely choosing between approaches
+
+        MEMORY RULES:
+        - When the user tells you personal info (name, role, preferences), save it with the memory tool
+        - When the user describes a repeated workflow, suggest saving it
+        - Check memory at start of complex tasks for relevant context
+        - Use task history to avoid repeating past failures
 
         CRITICAL - BASH TOOL RULES:
         - ONLY use bash for executable commands: git, npm, python, node, ls, etc.
@@ -1266,6 +1286,24 @@ module Ruboto
             next
           end
 
+          if user_input.start_with?("/tasks")
+            limit = user_input.split(" ")[1]&.to_i || 10
+            data = recent_tasks(limit)
+            if data.empty?
+              puts "#{DIM}No task history yet.#{RESET}"
+            else
+              puts "#{CYAN}Recent Tasks:#{RESET}"
+              data.split("\n").each do |row|
+                cols = row.split("|")
+                next if cols.length < 4
+                status = cols[2] == "1" ? "#{GREEN}✓#{RESET}" : "#{RED}✗#{RESET}"
+                puts "  #{status} #{cols[0][0, 50]}"
+                puts "    #{DIM}#{cols[3]}#{RESET}"
+              end
+            end
+            next
+          end
+
           if user_input == "/history"
             sql = "SELECT content FROM messages WHERE role='user' ORDER BY id DESC LIMIT 10;"
             entries = run_sql(sql).split("\n")
@@ -1284,6 +1322,9 @@ module Ruboto
 
           # Add user message to conversation
           messages << { role: "user", content: user_input }
+
+          # Track tools used in this interaction
+          interaction_tools = []
 
           # Agentic loop
           loop do
@@ -1324,6 +1365,7 @@ module Ruboto
               call_id = tc["id"]
 
               label = tool_message(tool_name, tool_args)
+              interaction_tools << tool_name
 
               print "\n"
               result = with_spinner(label) do
@@ -1346,6 +1388,18 @@ module Ruboto
                 content: result
               }
             end
+          end
+
+          # Save task to episodic memory
+          unless interaction_tools.empty?
+            last_text = messages.reverse.find { |m| m["content"] || m[:content] }&.then { |m| m["content"] || m[:content] }
+            save_task(
+              user_input,
+              (last_text || "")[0, 200],
+              interaction_tools.uniq.join(", "),
+              true,
+              session_id
+            )
           end
 
           puts
