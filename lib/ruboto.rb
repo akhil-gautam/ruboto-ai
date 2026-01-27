@@ -12,6 +12,9 @@ require_relative "ruboto/osascript"
 require_relative "ruboto/safety"
 require_relative "ruboto/tools/macos_auto"
 require_relative "ruboto/tools/browser"
+require_relative "ruboto/intelligence/pattern_detector"
+require_relative "ruboto/intelligence/proactive_triggers"
+require_relative "ruboto/intelligence/task_planner"
 
 module Ruboto
   API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -74,6 +77,9 @@ module Ruboto
     include Safety
     include Tools::MacosAuto
     include Tools::Browser
+    include Intelligence::PatternDetector
+    include Intelligence::ProactiveTriggers
+    include Intelligence::TaskPlanner
 
     # Human-readable tool action messages
     def tool_message(name, args)
@@ -122,6 +128,9 @@ module Ruboto
       when "browser"
         action = args["action"] || "action"
         "Safari: #{action.tr('_', ' ')}"
+      when "plan"
+        goal = args["goal"] || "task"
+        "Planning: #{goal[0, 40]}#{goal.length > 40 ? '...' : ''}"
       else
         name.capitalize.to_s
       end
@@ -736,6 +745,10 @@ module Ruboto
         "browser" => {
           impl: method(:tool_browser),
           schema: browser_schema
+        },
+        "plan" => {
+          impl: method(:tool_plan),
+          schema: plan_schema
         }
       }
     end
