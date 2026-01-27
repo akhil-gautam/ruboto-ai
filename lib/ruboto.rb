@@ -1149,6 +1149,7 @@ module Ruboto
           #{DIM}•#{RESET} Code: read, write, edit, search, run commands
           #{DIM}•#{RESET} macOS: calendar, reminders, email, notes, clipboard, notifications
           #{DIM}•#{RESET} Safari: open URLs, read pages, fill forms, click elements
+          #{DIM}•#{RESET} Intelligence: pattern detection, proactive suggestions, task planning
 
         #{CYAN}Commands:#{RESET}
           #{BOLD}/q#{RESET}        #{DIM}quit#{RESET}
@@ -1199,6 +1200,7 @@ module Ruboto
            - patch: Multi-line edits using unified diff format
            - verify: Check if command succeeds (use after code changes)
            - memory: Read/write persistent user memory (profile, workflows, task history)
+           - plan: Break complex requests into step-by-step plans using available tools
 
         2. PRIMITIVES (when meta-tools don't fit):
            - read/write/edit: Single, targeted file operations
@@ -1218,6 +1220,12 @@ module Ruboto
         - When the user describes a repeated workflow, suggest saving it
         - Check memory at start of complex tasks for relevant context
         - Use task history to avoid repeating past failures
+
+        INTELLIGENCE RULES:
+        - For complex multi-step requests, use the plan tool first to structure the approach
+        - Detected patterns and suggestions are shown to the user at session start
+        - When executing a plan, adapt if a step fails -- skip or find alternatives
+        - The plan tool returns advisory steps -- you decide execution order and can skip/add steps
 
         ACTION RULES:
         - Use macos_auto to open apps, check calendar, create reminders, send emails, create notes, manage clipboard
