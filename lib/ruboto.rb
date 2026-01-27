@@ -1614,5 +1614,21 @@ module Ruboto
       $stderr.puts "Error: #{e.message}"
       exit 1
     end
+
+    def run_tasks_cli(limit = 10)
+      ensure_db_exists
+      data = recent_tasks(limit)
+      if data.empty?
+        puts "No task history."
+        return
+      end
+      data.split("\n").each do |row|
+        cols = row.split("|")
+        next if cols.length < 4
+        status = cols[2] == "1" ? "[OK]" : "[FAIL]"
+        puts "#{status} #{cols[0][0, 60]}"
+        puts "  #{cols[3]}"
+      end
+    end
   end
 end
