@@ -829,6 +829,108 @@ module Ruboto
       # Ignore history load errors
     end
 
+    # --- Memory helpers ---
+
+    def save_task(request, outcome, tools_used, success, session_id = nil)
+      escaped_request = request.gsub("'", "''")
+      escaped_outcome = (outcome || "").gsub("'", "''")
+      escaped_tools = (tools_used || "").gsub("'", "''")
+      success_int = success ? 1 : 0
+      session_part = session_id ? "'#{session_id}'" : "NULL"
+      escaped_dir = Dir.pwd.gsub("'", "''")
+
+      sql = "INSERT INTO tasks (request, outcome, tools_used, success, session_id, working_dir) " \
+            "VALUES ('#{escaped_request}', '#{escaped_outcome}', '#{escaped_tools}', #{success_int}, #{session_part}, '#{escaped_dir}');"
+      run_sql(sql)
+    end
+
+    def recent_tasks(limit = 10)
+      sql = "SELECT request, outcome, success, created_at FROM tasks ORDER BY id DESC LIMIT #{limit};"
+      run_sql(sql)
+    end
+
+    def set_profile(key, value, confidence = 1.0, source = "explicit")
+      escaped_key = key.gsub("'", "''")
+      escaped_value = value.gsub("'", "''")
+      escaped_source = source.gsub("'", "''")
+
+      sql = "INSERT INTO profile (key, value, confidence, source, updated_at) " \
+            "VALUES ('#{escaped_key}', '#{escaped_value}', #{confidence}, '#{escaped_source}', datetime('now')) " \
+            "ON CONFLICT(key) DO UPDATE SET value='#{escaped_value}', confidence=#{confidence}, source='#{escaped_source}', updated_at=datetime('now');"
+      run_sql(sql)
+    end
+
+    def get_profile(key = nil)
+      if key
+        escaped_key = key.gsub("'", "''")
+        sql = "SELECT key, value, confidence, source FROM profile WHERE key='#{escaped_key}';"
+      else
+        sql = "SELECT key, value, confidence, source FROM profile ORDER BY key;"
+      end
+      run_sql(sql)
+    end
+
+    def delete_profile(key)
+      escaped_key = key.gsub("'", "''")
+      sql = "DELETE FROM profile WHERE key='#{escaped_key}';"
+      run_sql(sql)
+    end
+
+    def save_workflow(name, trigger, steps)
+      escaped_name = name.gsub("'", "''")
+      escaped_trigger = trigger.gsub("'", "''")
+      escaped_steps = steps.is_a?(Array) ? steps.to_json.gsub("'", "''") : steps.gsub("'", "''")
+
+      sql = "INSERT INTO workflows (name, trigger, steps) " \
+            "VALUES ('#{escaped_name}', '#{escaped_trigger}', '#{escaped_steps}') " \
+            "ON CONFLICT(name) DO UPDATE SET trigger='#{escaped_trigger}', steps='#{escaped_steps}';"
+      run_sql(sql)
+    end
+
+    def get_workflows
+      sql = "SELECT name, trigger, steps, frequency, last_run FROM workflows ORDER BY frequency DESC;"
+      run_sql(sql)
+    end
+
+    def find_workflow(trigger_text)
+      escaped = trigger_text.downcase.gsub("'", "''")
+      sql = "SELECT name, trigger, steps FROM workflows WHERE lower(trigger) LIKE '%#{escaped}%' LIMIT 5;"
+      run_sql(sql)
+    end
+
+    def increment_workflow(name)
+      escaped_name = name.gsub("'", "''")
+      sql = "UPDATE workflows SET frequency = frequency + 1, last_run = datetime('now') WHERE name='#{escaped_name}';"
+      run_sql(sql)
+    end
+
+    def save_pattern(pattern_type, description, conditions = nil)
+      escaped_type = pattern_type.gsub("'", "''")
+      escaped_desc = description.gsub("'", "''")
+      conditions_part = conditions ? "'#{conditions.gsub("'", "''")}'" : "NULL"
+
+      sql = "INSERT INTO patterns (pattern_type, description, conditions) " \
+            "VALUES ('#{escaped_type}', '#{escaped_desc}', #{conditions_part});"
+      run_sql(sql)
+    end
+
+    def get_patterns(min_confidence = 0.5)
+      sql = "SELECT pattern_type, description, conditions, frequency, confidence FROM patterns " \
+            "WHERE confidence >= #{min_confidence} ORDER BY confidence DESC;"
+      run_sql(sql)
+    end
+
+    def reinforce_pattern(id)
+      sql = "UPDATE patterns SET frequency = frequency + 1, " \
+            "confidence = MIN(1.0, confidence + 0.1), updated_at = datetime('now') WHERE id=#{id};"
+      run_sql(sql)
+    end
+
+    def weaken_pattern(id)
+      sql = "UPDATE patterns SET confidence = MAX(0.0, confidence - 0.1), updated_at = datetime('now') WHERE id=#{id};"
+      run_sql(sql)
+    end
+
     def terminal_width
       width = `tput cols 2>/dev/null`.to_i
       width > 0 ? width : 80
