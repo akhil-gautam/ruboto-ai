@@ -1154,6 +1154,7 @@ module Ruboto
           #{DIM}•#{RESET} macOS: calendar, reminders, email, notes, clipboard, notifications
           #{DIM}•#{RESET} Safari: open URLs, read pages, fill forms, click elements
           #{DIM}•#{RESET} Intelligence: pattern detection, proactive suggestions, task planning
+          #{DIM}•#{RESET} Scheduled: morning briefings, end-of-day summaries
 
         #{CYAN}Commands:#{RESET}
           #{BOLD}/q#{RESET}        #{DIM}quit#{RESET}
@@ -1163,6 +1164,7 @@ module Ruboto
           #{BOLD}/profile#{RESET}  #{DIM}view/set profile (set <key> <val>, del <key>)#{RESET}
           #{BOLD}/teach#{RESET}    #{DIM}teach workflows (/teach name when <trigger> do <steps>)#{RESET}
           #{BOLD}/tasks#{RESET}    #{DIM}show recent task history (/tasks <count>)#{RESET}
+          #{BOLD}/briefing#{RESET} #{DIM}run morning/evening briefing (/briefing morning|evening|auto)#{RESET}
       HELP
     end
 
@@ -1387,6 +1389,12 @@ module Ruboto
                 puts "    #{DIM}#{cols[3]}#{RESET}"
               end
             end
+            next
+          end
+
+          if user_input.start_with?("/briefing")
+            mode = user_input.split(" ")[1] || "auto"
+            run_briefing(mode)
             next
           end
 
