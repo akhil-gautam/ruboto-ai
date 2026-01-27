@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require "ruboto"
+require_relative "../lib/ruboto/cli"
 
-Ruboto.run
+Ruboto::CLI.run(ARGV)
