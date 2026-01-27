@@ -1497,5 +1497,122 @@ module Ruboto
         end
       end
     end
+
+    def run_quick(request, context: nil)
+      ensure_db_exists
+      model = MODELS.first[:id]
+      session_id = Time.now.strftime("%Y%m%d_%H%M%S")
+
+      # Build memory context
+      profile_data = get_profile
+      workflow_data = get_workflows
+      recent = recent_tasks(5)
+
+      memory_summary = ""
+      memory_summary += "USER PROFILE:\n#{profile_data}\n\n" unless profile_data.empty?
+      memory_summary += "KNOWN WORKFLOWS:\n#{workflow_data}\n\n" unless workflow_data.empty?
+      memory_summary += "RECENT TASKS:\n#{recent}\n\n" unless recent.empty?
+
+      context_line = context ? "\nCONTEXT: User is currently in #{context.sub('app:', '')}\n" : ""
+
+      system_prompt = <<~PROMPT
+        You are a fast, autonomous assistant with coding AND system automation powers. Working directory: #{Dir.pwd}
+        #{context_line}
+        #{memory_summary.empty? ? "" : "MEMORY (what you know about this user):\n#{memory_summary}"}
+
+        TOOL HIERARCHY - Use highest-level tool that fits:
+
+        1. META-TOOLS (prefer these):
+           - macos_auto: Control macOS apps (calendar, reminders, mail, notes, clipboard, notifications)
+           - browser: Interact with Safari (open URLs, read pages, fill forms, click, run JS)
+           - explore: Answer "where is X?" / "how does Y work?" questions
+           - patch: Multi-line edits using unified diff format
+           - verify: Check if command succeeds (use after code changes)
+           - memory: Read/write persistent user memory (profile, workflows, task history)
+           - plan: Break complex requests into step-by-step plans using available tools
+
+        2. PRIMITIVES (when meta-tools don't fit):
+           - read/write/edit: Single, targeted file operations
+           - grep/glob/find: When you know exactly what to search for
+           - tree: See directory structure
+           - bash: Run shell commands (only real commands, not prose)
+
+        AUTONOMY RULES:
+        - ACT FIRST. Just do it.
+        - After ANY code change → immediately use verify to check it works
+        - Keep using tools until you have a complete answer
+
+        ACTION RULES:
+        - Use macos_auto for macOS apps. Use browser for Safari.
+        - Chain actions naturally.
+
+        CRITICAL - BASH TOOL RULES:
+        - ONLY use bash for executable commands
+        - NEVER put prose or markdown in bash
+
+        Be concise. Act, don't narrate. Output plain text only — no markdown formatting.
+      PROMPT
+
+      messages = [
+        { role: "system", content: system_prompt },
+        { role: "user", content: request }
+      ]
+
+      interaction_tools = []
+      task_success = true
+      final_text = nil
+
+      loop do
+        response = call_api(messages, model)
+
+        if response["error"]
+          $stderr.puts "Error: #{response.dig("error", "message")}"
+          exit 1
+        end
+
+        choice = response.dig("choices", 0)
+        unless choice
+          $stderr.puts "Error: No response from model"
+          exit 1
+        end
+
+        message = choice["message"]
+        text_content = message["content"]
+        tool_calls = message["tool_calls"] || []
+
+        messages << message
+
+        final_text = text_content if text_content && !text_content.empty?
+
+        break if tool_calls.empty?
+
+        tool_calls.each do |tc|
+          tool_name = tc.dig("function", "name")
+          tool_args = JSON.parse(tc.dig("function", "arguments") || "{}")
+          call_id = tc["id"]
+
+          interaction_tools << tool_name
+          result = run_tool(tool_name, tool_args)
+
+          messages << {
+            role: "tool",
+            tool_call_id: call_id,
+            content: result
+          }
+        end
+      end
+
+      puts final_text if final_text
+
+      # Save task to episodic memory
+      unless interaction_tools.empty?
+        save_task(request, (final_text || "")[0, 200], interaction_tools.uniq.join(", "), task_success, session_id)
+      end
+
+      exit(task_success ? 0 : 1)
+    rescue => e
+      $stderr.puts "Error: #{e.message}"
+      exit 1
+    end
   end
 end
