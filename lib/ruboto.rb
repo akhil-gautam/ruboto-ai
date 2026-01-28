@@ -1183,7 +1183,7 @@ module Ruboto
           #{DIM}•#{RESET} macOS: calendar, reminders, email, notes, clipboard, notifications
           #{DIM}•#{RESET} Safari: open URLs, read pages, fill forms, click elements
           #{DIM}•#{RESET} Intelligence: pattern detection, proactive suggestions, task planning
-          #{DIM}•#{RESET} Scheduled: morning briefings, end-of-day summaries
+          #{DIM}•#{RESET} Autonomous: background daemon, email monitoring, auto-actions
 
         #{CYAN}Commands:#{RESET}
           #{BOLD}/q#{RESET}        #{DIM}quit#{RESET}
@@ -1194,6 +1194,8 @@ module Ruboto
           #{BOLD}/teach#{RESET}    #{DIM}teach workflows (/teach name when <trigger> do <steps>)#{RESET}
           #{BOLD}/tasks#{RESET}    #{DIM}show recent task history (/tasks <count>)#{RESET}
           #{BOLD}/briefing#{RESET} #{DIM}run morning/evening briefing (/briefing morning|evening|auto)#{RESET}
+          #{BOLD}/queue#{RESET}    #{DIM}show pending daemon actions#{RESET}
+          #{BOLD}/cancel#{RESET}   #{DIM}cancel a daemon action (/cancel <id>)#{RESET}
       HELP
     end
 
@@ -1424,6 +1426,21 @@ module Ruboto
           if user_input.start_with?("/briefing")
             mode = user_input.split(" ")[1] || "auto"
             run_briefing(mode)
+            next
+          end
+
+          if user_input == "/queue"
+            show_action_queue
+            next
+          end
+
+          if user_input.start_with?("/cancel")
+            action_id = user_input.split(" ")[1]
+            if action_id && action_id.match?(/\A\d+\z/)
+              cancel_action(action_id.to_i)
+            else
+              puts "#{RED}Usage: /cancel <action_id>#{RESET}"
+            end
             next
           end
 
