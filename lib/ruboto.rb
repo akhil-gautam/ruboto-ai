@@ -1534,11 +1534,32 @@ module Ruboto
     end
 
     def run_quick(request, context: nil)
+      result = run_headless(request, context: context)
+      puts result[:text] if result[:text]
+      exit(result[:success] ? 0 : 1)
+    end
+
+    def run_tasks_cli(limit = 10)
       ensure_db_exists
-      model = MODELS.first[:id]
+      data = recent_tasks(limit)
+      if data.empty?
+        puts "No task history."
+        return
+      end
+      data.split("\n").each do |row|
+        cols = row.split("|")
+        next if cols.length < 4
+        status = cols[2] == "1" ? "[OK]" : "[FAIL]"
+        puts "#{status} #{cols[0][0, 60]}"
+        puts "  #{cols[3]}"
+      end
+    end
+
+    def run_headless(request, model: nil, context: nil)
+      ensure_db_exists
+      model ||= MODELS.first[:id]
       session_id = Time.now.strftime("%Y%m%d_%H%M%S")
 
-      # Build memory context
       profile_data = get_profile
       workflow_data = get_workflows
       recent = recent_tasks(5)
@@ -1601,14 +1622,12 @@ module Ruboto
         response = call_api(messages, model)
 
         if response["error"]
-          $stderr.puts "Error: #{response.dig("error", "message")}"
-          exit 1
+          return { success: false, text: "API Error: #{response.dig("error", "message")}", tools_used: interaction_tools }
         end
 
         choice = response.dig("choices", 0)
         unless choice
-          $stderr.puts "Error: No response from model"
-          exit 1
+          return { success: false, text: "No response from model", tools_used: interaction_tools }
         end
 
         message = choice["message"]
@@ -1637,33 +1656,13 @@ module Ruboto
         end
       end
 
-      puts final_text if final_text
-
-      # Save task to episodic memory
       unless interaction_tools.empty?
         save_task(request, (final_text || "")[0, 200], interaction_tools.uniq.join(", "), task_success, session_id)
       end
 
-      exit(task_success ? 0 : 1)
+      { success: task_success, text: final_text, tools_used: interaction_tools }
     rescue => e
-      $stderr.puts "Error: #{e.message}"
-      exit 1
-    end
-
-    def run_tasks_cli(limit = 10)
-      ensure_db_exists
-      data = recent_tasks(limit)
-      if data.empty?
-        puts "No task history."
-        return
-      end
-      data.split("\n").each do |row|
-        cols = row.split("|")
-        next if cols.length < 4
-        status = cols[2] == "1" ? "[OK]" : "[FAIL]"
-        puts "#{status} #{cols[0][0, 60]}"
-        puts "  #{cols[3]}"
-      end
+      { success: false, text: "Error: #{e.message}", tools_used: [] }
     end
   end
 end
