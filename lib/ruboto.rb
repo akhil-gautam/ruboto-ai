@@ -909,6 +909,29 @@ module Ruboto
           created_at TEXT DEFAULT (datetime('now')),
           updated_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS action_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          intent TEXT NOT NULL,
+          description TEXT,
+          source_email_id TEXT,
+          extracted_data TEXT,
+          action_plan TEXT,
+          status TEXT DEFAULT 'pending',
+          confidence REAL,
+          not_before TEXT,
+          result TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          executed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS watched_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          seen_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(source, source_id)
+        );
       SQL
 
       run_sql(schema)
