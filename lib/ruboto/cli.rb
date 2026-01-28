@@ -14,6 +14,11 @@ module Ruboto
         --tasks [N]                Print recent N tasks (default 10), exit
         --install-schedule         Install launchd plist for scheduled briefings
         --uninstall-schedule       Remove launchd plist
+        --daemon                   Start background daemon (foreground, for launchd)
+        --install-daemon           Install launchd plist for background daemon
+        --uninstall-daemon         Remove daemon plist
+        --queue                    Show pending action queue
+        --cancel-action ID         Cancel a pending/notified action
         --help                     Show this help
     TEXT
 
@@ -48,6 +53,23 @@ module Ruboto
         Ruboto.install_schedule
       when "--uninstall-schedule"
         Ruboto.uninstall_schedule
+      when "--daemon"
+        Ruboto.run_daemon
+      when "--install-daemon"
+        Ruboto.install_daemon
+      when "--uninstall-daemon"
+        Ruboto.uninstall_daemon
+      when "--queue"
+        Ruboto.ensure_db_exists
+        Ruboto.show_action_queue
+      when "--cancel-action"
+        action_id = argv[1]
+        unless action_id && action_id.match?(/\A\d+\z/)
+          $stderr.puts "Error: --cancel-action requires a numeric action ID"
+          exit 1
+        end
+        Ruboto.ensure_db_exists
+        Ruboto.cancel_action(action_id.to_i)
       else
         $stderr.puts "Unknown option: #{argv.first}"
         $stderr.puts USAGE
