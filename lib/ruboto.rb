@@ -51,8 +51,11 @@ module Ruboto
 
   # History configuration
   RUBOTO_DIR = File.expand_path("~/.ruboto")
-  DB_PATH = File.join(RUBOTO_DIR, "history.db")
   MAX_HISTORY_LOAD = 100
+
+  def self.db_path
+    ENV["RUBOTO_DB_PATH"] || File.join(RUBOTO_DIR, "history.db")
+  end
 
   # Spinner frames (braille dots for smooth animation)
   SPINNER_FRAMES = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
@@ -810,7 +813,8 @@ module Ruboto
       body = {
         model: model,
         messages: messages,
-        tools: tool_schemas
+        tools: tool_schemas,
+        max_tokens: 8192
       }
 
       request.body = body.to_json
@@ -938,13 +942,65 @@ module Ruboto
           seen_at TEXT DEFAULT (datetime('now')),
           UNIQUE(source, source_id)
         );
+
+        CREATE TABLE IF NOT EXISTS user_workflows (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          trigger_type TEXT NOT NULL,
+          trigger_config TEXT,
+          sources TEXT,
+          transforms TEXT,
+          destinations TEXT,
+          overall_confidence REAL DEFAULT 0.0,
+          run_count INTEGER DEFAULT 0,
+          success_count INTEGER DEFAULT 0,
+          enabled INTEGER DEFAULT 1,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(name)
+        );
+
+        CREATE TABLE IF NOT EXISTS workflow_steps (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workflow_id INTEGER NOT NULL,
+          step_order INTEGER NOT NULL,
+          tool TEXT NOT NULL,
+          params TEXT,
+          output_key TEXT,
+          description TEXT,
+          confidence REAL DEFAULT 0.0,
+          FOREIGN KEY (workflow_id) REFERENCES user_workflows(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS workflow_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workflow_id INTEGER NOT NULL,
+          status TEXT DEFAULT 'running',
+          started_at TEXT DEFAULT (datetime('now')),
+          completed_at TEXT,
+          state_snapshot TEXT,
+          log TEXT,
+          FOREIGN KEY (workflow_id) REFERENCES user_workflows(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS step_corrections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workflow_id INTEGER NOT NULL,
+          step_order INTEGER NOT NULL,
+          correction_type TEXT NOT NULL,
+          original_value TEXT,
+          corrected_value TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (workflow_id) REFERENCES user_workflows(id)
+        );
       SQL
 
       run_sql(schema)
     end
 
     def run_sql(sql)
-      output, _status = Open3.capture2('sqlite3', DB_PATH, sql)
+      output, _status = Open3.capture2('sqlite3', db_path, sql)
       output.strip
     rescue => e
       ""
@@ -1264,12 +1320,27 @@ module Ruboto
         - When executing a plan, adapt if a step fails -- skip or find alternatives
         - The plan tool returns advisory steps -- you decide execution order and can skip/add steps
 
+        SAFETY RULES (HIGHEST PRIORITY):
+        - NEVER take destructive actions unless the user explicitly asks for them
+        - Destructive actions include: deleting files/emails/events, sending emails on behalf of the user, modifying or cancelling bookings/reservations, running rm/rmdir/git reset --hard, overwriting important data
+        - When in doubt, READ and REPORT rather than modify or delete
+        - Always prefer non-destructive alternatives (e.g., draft an email instead of sending it, list files instead of deleting them)
+        - If a task inherently requires a destructive action, explain what you would do and ask for confirmation first
+
         ACTION RULES:
         - Use macos_auto to open apps, check calendar, create reminders, send emails, create notes, manage clipboard
         - Use browser to open URLs, read page content, fill forms, click buttons, extract links
         - Chain actions naturally: check calendar → draft email → send it
         - mail_send and browser run_js require user confirmation — just call the tool, user will be prompted
         - If an action fails (app not running, permission denied), report the error and suggest alternatives
+
+        BROWSER WORKFLOW FOR EMAIL → ACTION TASKS:
+        1. SEARCH: Use Gmail URL search (mail.google.com/mail/u/0/#search/your+terms) — never click labels or categories
+        2. OPEN EMAIL: Use get_links to find email URLs, then open_url to view the specific email
+        3. EXTRACT INFO: Use get_text to read the email body — extract PNR, booking ID, dates, names, links
+        4. NAVIGATE TO ACTION SITE: Use open_url to go directly to the service website (airline, hotel, etc.)
+        5. FILL FORM: Use get_text to identify ALL input fields first, then fill EACH field before clicking submit
+        6. NEVER click submit/OTP buttons until ALL required fields are filled
 
         CRITICAL - BASH TOOL RULES:
         - ONLY use bash for executable commands: git, npm, python, node, ls, etc.
@@ -1616,14 +1687,29 @@ module Ruboto
            - tree: See directory structure
            - bash: Run shell commands (only real commands, not prose)
 
+        SAFETY RULES (HIGHEST PRIORITY):
+        - NEVER take destructive actions unless the user explicitly asked for them
+        - Destructive actions include: deleting files/emails/events, sending emails, modifying or cancelling bookings/reservations, running rm/rmdir/git reset --hard, overwriting important data
+        - When in doubt, READ and REPORT rather than modify or delete
+        - Always prefer non-destructive alternatives (e.g., open a page and report what you see rather than submitting forms)
+        - If a task inherently requires a destructive action, stop and report what you would do instead of doing it
+
         AUTONOMY RULES:
-        - ACT FIRST. Just do it.
+        - ACT FIRST. Just do it — but never destructively.
         - After ANY code change → immediately use verify to check it works
         - Keep using tools until you have a complete answer
 
         ACTION RULES:
         - Use macos_auto for macOS apps. Use browser for Safari.
         - Chain actions naturally.
+
+        BROWSER WORKFLOW FOR EMAIL → ACTION TASKS:
+        1. SEARCH: Use Gmail URL search (mail.google.com/mail/u/0/#search/your+terms) — never click labels or categories
+        2. OPEN EMAIL: Use get_links to find email URLs, then open_url to view the specific email
+        3. EXTRACT INFO: Use get_text to read the email body — extract PNR, booking ID, dates, names, links
+        4. NAVIGATE TO ACTION SITE: Use open_url to go directly to the service website (airline, hotel, etc.)
+        5. FILL FORM: Use get_text to identify ALL input fields first, then fill EACH field before clicking submit
+        6. NEVER click submit/OTP buttons until ALL required fields are filled
 
         CRITICAL - BASH TOOL RULES:
         - ONLY use bash for executable commands
