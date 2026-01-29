@@ -129,8 +129,8 @@ module Ruboto
 
       if success
         puts "Ruboto daemon installed."
-        puts "  Polls email every 5 minutes"
-        puts "  Auto-acts on actionable emails after 5-min notification"
+        puts "  Polls email every 1 minute (testing mode)"
+        puts "  Auto-acts on actionable emails after 1-min notification"
         puts "  Handles morning/evening briefings"
         puts "  Plist: #{DAEMON_PLIST_PATH}"
         puts "  Log: #{RUBOTO_DIR}/daemon.log"

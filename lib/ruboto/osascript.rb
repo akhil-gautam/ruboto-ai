@@ -4,7 +4,7 @@ require "open3"
 
 module Ruboto
   module Osascript
-    OSASCRIPT_TIMEOUT = 30
+    OSASCRIPT_TIMEOUT = 180  # 3 minutes for very slow Mail.app with large mailboxes
 
     def run_applescript(script)
       run_osascript("osascript", "-e", script)

@@ -115,31 +115,29 @@ module Ruboto
 
         when "mail_read"
           limit = (args["limit"] || 5).to_i.clamp(1, 20)
-          jxa = <<~JS.strip
-            var mail = Application("Mail");
-            var inbox = mail.inbox();
-            var msgs = inbox.messages();
-            var results = [];
-            var count = Math.min(#{limit}, msgs.length);
-            for (var i = 0; i < count; i++) {
-              var m = msgs[i];
-              results.push({
-                from: m.sender(),
-                subject: m.subject(),
-                date: m.dateReceived().toLocaleString(),
-                read: m.readStatus()
-              });
-            }
-            JSON.stringify(results);
-          JS
-          result = run_jxa(jxa)
+          # Use AppleScript instead of JXA - mail.inbox() in JXA returns "All Inboxes"
+          # which is a virtual mailbox that doesn't support .messages() access (error -1741)
+          script = <<~'APPLESCRIPT'
+            tell application "Mail"
+              set msgList to messages 1 thru LIMIT_PLACEHOLDER of inbox
+              set output to ""
+              repeat with m in msgList
+                set theSender to sender of m
+                set theSubj to subject of m
+                set theDate to date received of m as string
+                set theRead to read status of m
+                set readMark to " "
+                if not theRead then set readMark to "*"
+                set output to output & readMark & " " & theSender & ": " & theSubj & " (" & theDate & ")" & linefeed
+              end repeat
+              return output
+            end tell
+          APPLESCRIPT
+          script = script.gsub("LIMIT_PLACEHOLDER", limit.to_s)
+          result = run_applescript(script)
           if result[:success]
-            emails = JSON.parse(result[:output]) rescue []
-            if emails.empty?
-              "No emails found."
-            else
-              emails.map { |e| "#{e['read'] ? ' ' : '*'} #{e['from']}: #{e['subject']} (#{e['date']})" }.join("\n")
-            end
+            output = result[:output].strip
+            output.empty? ? "No emails found." : output
           else
             "error: #{result[:error]}"
           end

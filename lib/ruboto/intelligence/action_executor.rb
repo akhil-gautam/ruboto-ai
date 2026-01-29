@@ -3,7 +3,7 @@
 module Ruboto
   module Intelligence
     module ActionExecutor
-      COUNTDOWN_SECONDS = 300 # 5 minutes
+      COUNTDOWN_SECONDS = 60 # 1 minute (increase to 300 for production)
 
       def queue_action(intent_item)
         email_id = intent_item["email_id"]
@@ -39,7 +39,7 @@ module Ruboto
           tool_macos_auto({
             "action" => "notify",
             "title" => "Ruboto: #{description}",
-            "message" => "Auto-acting in 5 minutes. Run: ruboto-ai --cancel-action #{action_id} to cancel."
+            "message" => "Auto-acting in #{COUNTDOWN_SECONDS / 60} minute(s). Run: ruboto-ai --cancel-action #{action_id} to cancel."
           })
 
           daemon_log("action_notified", { action_id: action_id, not_before: not_before })
@@ -74,7 +74,8 @@ module Ruboto
         run_sql("UPDATE action_queue SET status='executing' WHERE id=#{action[:id]};")
         daemon_log("action_executing", { action_id: action[:id], intent: action[:intent] })
 
-        prompt = "#{action[:action_plan]}\n\nExtracted data: #{action[:extracted_data]}"
+        safety = safety_prompt_for_intent(action[:intent])
+        prompt = "#{safety}\n\n#{action[:action_plan]}\n\nExtracted data: #{action[:extracted_data]}"
         result = run_headless(prompt)
 
         status = result[:success] ? "completed" : "failed"
@@ -137,6 +138,32 @@ module Ruboto
       end
 
       private
+
+      def safety_prompt_for_intent(intent)
+        case intent
+        when "flight_checkin"
+          # Flight check-in is time-sensitive and not destructive - allow full automation
+          "AUTONOMOUS MODE: You are completing a flight web check-in automatically. " \
+          "This is a time-sensitive action that benefits from early completion. " \
+          "ALLOWED: Open the check-in URL, fill in passenger details (PNR, name, etc.), " \
+          "select seats if prompted (prefer window or aisle), and SUBMIT the check-in form. " \
+          "AFTER SUCCESS: Download or screenshot the boarding pass if possible. " \
+          "NOT ALLOWED: Making purchases, paying for upgrades, changing flight details, or canceling bookings. " \
+          "If the check-in requires payment or shows errors, STOP and report the issue."
+        when "package_tracking"
+          # Package tracking is read-only
+          "AUTONOMOUS MODE: You are checking package tracking status. " \
+          "ALLOWED: Open tracking URLs, read delivery status, extract estimated delivery dates. " \
+          "NOT ALLOWED: Modifying delivery instructions, rescheduling, or any actions that change the delivery."
+        else
+          # Default conservative safety for other intents
+          "SAFETY: You are running autonomously without a user present. " \
+          "NEVER take destructive actions — do NOT delete anything, do NOT send emails, " \
+          "do NOT submit payment forms, do NOT cancel or modify existing bookings. " \
+          "Only perform safe, read-oriented or clearly constructive actions. " \
+          "If the task requires a destructive or irreversible action, STOP and report what you would do instead."
+        end
+      end
 
       def build_description(intent, data)
         case intent

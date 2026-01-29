@@ -28,5 +28,6 @@ Gem::Specification.new do |spec|
   spec.executables = ["ruboto-ai"]
   spec.require_paths = ["lib"]
 
-  # Runtime dependencies - none! Pure Ruby stdlib only
+  # Runtime dependencies
+  spec.add_dependency "ferrum", "~> 0.17"
 end
