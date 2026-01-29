@@ -1966,27 +1966,113 @@ module Ruboto
     end
 
     def execute_workflow_step(step, params)
+      require_relative "ruboto/workflow"
+
       case step.tool
       when "file_glob"
-        files = Dir.glob(File.join(params[:path] || ".", params[:pattern] || "*"))
+        path = params[:path] || params["path"] || "."
+        pattern = params[:pattern] || params["pattern"] || "*"
+        full_pattern = File.join(File.expand_path(path), pattern)
+        files = Dir.glob(full_pattern).select { |f| File.file?(f) }
+
+        # Apply time filter if present
+        if params[:since]
+          cutoff = parse_time_filter(params[:since])
+          files = files.select { |f| File.mtime(f) >= cutoff } if cutoff
+        end
+
+        files = files.sort_by { |f| -File.mtime(f).to_i } # newest first
         { success: true, output: files, summary: "Found #{files.length} files" }
 
       when "pdf_extract"
-        files = params[:files] || []
-        { success: true, output: files.map { |f| { file: f, data: {} } }, summary: "Processed #{files.length} files" }
+        files = params[:files] || params["files"] || []
+        fields = params[:fields] || params["fields"] || ["vendor", "amount", "date"]
+        fields = fields.map(&:to_s)
 
-      when "file_append"
-        { success: true, output: nil, summary: "Appended to #{params[:path]}" }
+        results = Workflow::Extractors::PDF.batch_extract(files, fields)
+        successful = results.reject { |r| r[:error] }
+
+        {
+          success: successful.length > 0,
+          output: results,
+          summary: "Extracted from #{successful.length}/#{files.length} files"
+        }
+
+      when "csv_read"
+        path = params[:path] || params["path"]
+        rows = Workflow::Extractors::CSV.read(path)
+        { success: true, output: rows, summary: "Read #{rows.length} rows" }
+
+      when "csv_append", "file_append"
+        path = params[:path] || params["path"]
+        data = params[:data] || params["data"]
+
+        if data.is_a?(Array)
+          data.each do |item|
+            row_data = item.is_a?(Hash) && item[:data] ? item[:data] : item
+            Workflow::Extractors::CSV.append(path, row_data)
+          end
+          { success: true, output: nil, summary: "Appended #{data.length} rows to #{File.basename(path)}" }
+        else
+          Workflow::Extractors::CSV.append(path, data)
+          { success: true, output: nil, summary: "Appended to #{File.basename(path)}" }
+        end
+
+      when "data_filter"
+        data = params[:data] || params["data"] || []
+        condition = params[:condition] || params["condition"]
+        filtered = Workflow::Extractors::CSV.filter(data, condition)
+        { success: true, output: filtered, summary: "Filtered to #{filtered.length} items" }
 
       when "browser", "browser_form"
         result = tool_browser(params.transform_keys(&:to_s))
-        { success: !result.to_s.start_with?("error"), output: result, summary: result.to_s[0, 60] }
+        success = !result.to_s.start_with?("error")
+        { success: success, output: result, summary: result.to_s[0, 60] }
+
+      when "email_search"
+        result = tool_macos_auto({ "action" => "mail_inbox", "limit" => 20 })
+        { success: true, output: result, summary: "Retrieved emails" }
+
+      when "email_send"
+        to = params[:to] || params["to"]
+        subject = params[:subject] || params["subject"] || "Workflow Result"
+        body = params[:body] || params["body"] || params[:data].to_s
+
+        result = tool_macos_auto({
+          "action" => "mail_send",
+          "to" => to,
+          "subject" => subject,
+          "body" => body
+        })
+        { success: !result.to_s.start_with?("error"), output: result, summary: "Sent email to #{to}" }
+
+      when "noop"
+        { success: true, output: nil, summary: "No operation" }
 
       else
         { success: false, error: "Unknown tool: #{step.tool}" }
       end
     rescue => e
       { success: false, error: e.message }
+    end
+
+    def parse_time_filter(filter)
+      case filter.to_s.downcase
+      when /(\d+)d/, /(\d+)\s*days?/
+        Time.now - ($1.to_i * 24 * 60 * 60)
+      when /(\d+)w/, /(\d+)\s*weeks?/
+        Time.now - ($1.to_i * 7 * 24 * 60 * 60)
+      when /(\d+)h/, /(\d+)\s*hours?/
+        Time.now - ($1.to_i * 60 * 60)
+      when "today"
+        Time.now - (24 * 60 * 60)
+      when "this week", "7d"
+        Time.now - (7 * 24 * 60 * 60)
+      when "this month", "30d"
+        Time.now - (30 * 24 * 60 * 60)
+      else
+        nil
+      end
     end
   end
 end
