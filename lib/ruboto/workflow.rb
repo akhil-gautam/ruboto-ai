@@ -5,8 +5,11 @@ require_relative "workflow/intent_parser"
 require_relative "workflow/plan_generator"
 require_relative "workflow/runtime"
 require_relative "workflow/storage"
+require_relative "workflow/extractors/pdf"
 
 module Ruboto
   module Workflow
+    module Extractors
+    end
   end
 end
