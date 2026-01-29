@@ -6,6 +6,7 @@ require_relative "workflow/plan_generator"
 require_relative "workflow/runtime"
 require_relative "workflow/storage"
 require_relative "workflow/extractors/pdf"
+require_relative "workflow/extractors/csv"
 
 module Ruboto
   module Workflow
