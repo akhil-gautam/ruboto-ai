@@ -1255,6 +1255,7 @@ module Ruboto
           #{BOLD}/workflow#{RESET} #{DIM}create workflow (/workflow "description")#{RESET}
           #{BOLD}/workflows#{RESET} #{DIM}list saved workflows#{RESET}
           #{BOLD}/run#{RESET}      #{DIM}run a workflow (/run <name>)#{RESET}
+          #{BOLD}/trust#{RESET}    #{DIM}view/adjust step confidence (/trust <name> [step] [0-100])#{RESET}
       HELP
     end
 
@@ -1551,6 +1552,17 @@ module Ruboto
               puts "#{RED}Usage: /run <workflow-name>#{RESET}"
             else
               run_workflow_cli(name)
+            end
+            next
+          end
+
+          if user_input.start_with?("/trust")
+            args = user_input.sub("/trust", "").strip.split(/\s+/)
+            if args.empty?
+              puts "#{RED}Usage: /trust <workflow-name> [step_number] [confidence 0-100]#{RESET}"
+              puts "#{DIM}Example: /trust weekly-expenses 2 90#{RESET}"
+            else
+              trust_workflow_cli(args[0], args[1]&.to_i, args[2]&.to_i)
             end
             next
           end
@@ -1856,6 +1868,77 @@ module Ruboto
       end
     end
 
+    def trust_workflow_cli(name, step_number = nil, confidence_percent = nil)
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      workflow = Workflow::Storage.load_workflow_by_name(name)
+      unless workflow
+        puts "#{RED}Workflow '#{name}' not found.#{RESET}"
+        return
+      end
+
+      steps = Workflow::Storage.load_steps(workflow[:id])
+
+      if step_number.nil?
+        # Show graduation status for all steps
+        puts "#{CYAN}Trust Status: #{workflow[:name]}#{RESET}\n\n"
+
+        steps.each do |step|
+          tracker = Workflow::ConfidenceTracker.new(workflow_id: workflow[:id], step_order: step[:step_order])
+          confidence = step[:confidence]
+          status = tracker.graduation_status(
+            confidence: confidence,
+            run_count: workflow[:run_count],
+            recent_corrections: tracker.get_corrections.length
+          )
+
+          conf_percent = (confidence * 100).round
+          conf_color = conf_percent >= 80 ? GREEN : (conf_percent >= 50 ? YELLOW : RED)
+          grad_icon = status[:ready] ? "#{GREEN}✓#{RESET}" : "#{YELLOW}○#{RESET}"
+
+          puts "  #{BOLD}Step #{step[:step_order]}:#{RESET} #{step[:description]}"
+          puts "    Confidence: #{conf_color}#{conf_percent}%#{RESET} | #{grad_icon} #{status[:ready] ? 'Ready for autonomous' : 'Supervised'}"
+
+          unless status[:ready]
+            status[:reasons].each { |r| puts "    #{DIM}• #{r}#{RESET}" }
+          end
+
+          # Show learned patterns
+          patterns = tracker.infer_patterns
+          unless patterns.empty?
+            puts "    #{CYAN}Learned patterns:#{RESET}"
+            patterns.each { |p| puts "      • #{p[:type]}: #{p[:pattern]}" }
+          end
+          puts
+        end
+        return
+      end
+
+      # Adjust specific step confidence
+      step = steps.find { |s| s[:step_order] == step_number }
+      unless step
+        puts "#{RED}Step #{step_number} not found. Available steps: 1-#{steps.length}#{RESET}"
+        return
+      end
+
+      if confidence_percent.nil?
+        # Show current status
+        puts "#{CYAN}Step #{step_number}:#{RESET} #{step[:description]}"
+        puts "  Current confidence: #{(step[:confidence] * 100).round}%"
+        puts "  #{DIM}Use: /trust #{name} #{step_number} <0-100> to adjust#{RESET}"
+        return
+      end
+
+      # Set new confidence
+      new_confidence = [[confidence_percent / 100.0, 0.0].max, 1.0].min
+      Workflow::Storage.update_step_confidence(workflow[:id], step_number, new_confidence)
+      Workflow::Storage.update_overall_confidence(workflow[:id])
+
+      puts "#{GREEN}✓#{RESET} Updated step #{step_number} confidence to #{confidence_percent}%"
+      puts "#{DIM}Step will #{new_confidence >= 0.8 ? 'run autonomously' : 'require approval'} next time.#{RESET}"
+    end
+
     def run_workflow_cli(name)
       require_relative "ruboto/workflow"
       ensure_db_exists
@@ -1900,11 +1983,15 @@ module Ruboto
           print "\n  #{YELLOW}[a]pprove  [s]kip  [e]dit  [c]ancel#{RESET} > "
           choice = gets&.strip&.downcase
 
+          tracker = Workflow::ConfidenceTracker.new(workflow_id: workflow[:id], step_order: step.id)
+
           case choice
           when "a"
-            # Continue
+            # Continue with approval - confidence increases after execution
           when "s"
             puts "  #{DIM}Skipped.#{RESET}"
+            new_confidence = tracker.on_skip(step.confidence)
+            Workflow::Storage.update_step_confidence(workflow[:id], step.id, new_confidence)
             runtime.log_event(:skipped)
             runtime.advance
             next
@@ -1913,14 +2000,21 @@ module Ruboto
             success = false
             break
           when "e"
-            puts "  #{DIM}Edit not yet implemented.#{RESET}"
-            next
+            edited_params = edit_step_params(step, resolved_params, tracker)
+            if edited_params
+              resolved_params = edited_params
+              puts "  #{GREEN}✓#{RESET} Parameters updated."
+            else
+              puts "  #{DIM}Edit cancelled.#{RESET}"
+              next
+            end
           else
             puts "  #{DIM}Invalid choice. Try again.#{RESET}"
             next
           end
         end
 
+        tracker = Workflow::ConfidenceTracker.new(workflow_id: workflow[:id], step_order: step.id)
         print "  #{YELLOW}Executing...#{RESET}"
         result = execute_workflow_step(step, resolved_params)
 
@@ -1929,7 +2023,7 @@ module Ruboto
           runtime.store_result(step.output_key, result[:output])
           runtime.log_event(:completed, { output: result[:summary] })
 
-          new_confidence = [step.confidence + 0.2, 1.0].min
+          new_confidence = tracker.on_approval(step.confidence)
           Workflow::Storage.update_step_confidence(workflow[:id], step.id, new_confidence)
         else
           puts "\r  #{RED}✗#{RESET} #{result[:error]}          "
@@ -1962,6 +2056,78 @@ module Ruboto
         puts "#{GREEN}✓ Workflow completed successfully.#{RESET}"
       else
         puts "#{RED}✗ Workflow did not complete.#{RESET}"
+      end
+    end
+
+    def edit_step_params(step, current_params, tracker)
+      puts "\n  #{CYAN}Edit parameters for: #{step.tool}#{RESET}"
+      puts "  #{DIM}Current parameters:#{RESET}"
+
+      param_keys = current_params.keys
+      param_keys.each_with_index do |key, idx|
+        puts "    #{idx + 1}. #{key}: #{current_params[key].inspect}"
+      end
+
+      print "\n  #{YELLOW}Enter parameter number to edit (or 'done' to finish, 'cancel' to abort):#{RESET} "
+      input = gets&.strip&.downcase
+
+      return nil if input == "cancel"
+      return current_params if input == "done"
+
+      idx = input.to_i - 1
+      if idx < 0 || idx >= param_keys.length
+        puts "  #{RED}Invalid selection.#{RESET}"
+        return edit_step_params(step, current_params, tracker)
+      end
+
+      key = param_keys[idx]
+      original_value = current_params[key]
+
+      puts "  #{DIM}Current value: #{original_value.inspect}#{RESET}"
+      print "  #{YELLOW}New value (or 'keep' to keep current):#{RESET} "
+      new_value_str = gets&.strip
+
+      return edit_step_params(step, current_params, tracker) if new_value_str == "keep"
+
+      # Parse the new value
+      new_value = parse_param_value(new_value_str, original_value)
+
+      # Record the correction
+      tracker.on_correction(
+        step.confidence,
+        correction_type: "param_edit",
+        original: original_value.to_s,
+        corrected: new_value.to_s
+      )
+
+      # Update params and continue editing
+      updated_params = current_params.dup
+      updated_params[key] = new_value
+
+      puts "  #{GREEN}✓#{RESET} Updated #{key}"
+      edit_step_params(step, updated_params, tracker)
+    end
+
+    def parse_param_value(str, original)
+      return str if original.is_a?(String)
+
+      if original.is_a?(Array)
+        # Try to parse as JSON array, fallback to comma-separated
+        begin
+          JSON.parse(str)
+        rescue
+          str.split(",").map(&:strip)
+        end
+      elsif original.is_a?(Hash)
+        begin
+          JSON.parse(str)
+        rescue
+          original
+        end
+      elsif original.is_a?(Numeric)
+        str.include?(".") ? str.to_f : str.to_i
+      else
+        str
       end
     end
 
@@ -2049,6 +2215,25 @@ module Ruboto
       when "noop"
         { success: true, output: nil, summary: "No operation" }
 
+      when "download_file", "web_download"
+        url = params[:url] || params["url"]
+        return { success: false, error: "url is required" } unless url
+
+        output_path = params[:path] || params["path"]
+        unless output_path
+          # Auto-generate filename from URL
+          filename = File.basename(URI.parse(url).path)
+          filename = "download_#{Time.now.to_i}" if filename.empty?
+          output_path = File.join("/tmp", filename)
+        end
+
+        # Ensure directory exists
+        FileUtils.mkdir_p(File.dirname(output_path))
+
+        # Download with redirect following
+        downloaded_path = download_file_from_url(url, output_path)
+        { success: true, output: downloaded_path, summary: "Downloaded to #{downloaded_path}" }
+
       else
         { success: false, error: "Unknown tool: #{step.tool}" }
       end
@@ -2072,6 +2257,37 @@ module Ruboto
         Time.now - (30 * 24 * 60 * 60)
       else
         nil
+      end
+    end
+
+    def download_file_from_url(url, output_path, max_redirects = 5)
+      uri = URI.parse(url)
+      raise "Invalid URL" unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
+
+      redirect_count = 0
+      loop do
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.use_ssl = uri.scheme == "https"
+        http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+        http.open_timeout = 30
+        http.read_timeout = 60
+
+        request = Net::HTTP::Get.new(uri.request_uri)
+        request["User-Agent"] = "Ruboto/1.0"
+
+        response = http.request(request)
+
+        case response
+        when Net::HTTPSuccess
+          File.open(output_path, "wb") { |f| f.write(response.body) }
+          return output_path
+        when Net::HTTPRedirection
+          redirect_count += 1
+          raise "Too many redirects" if redirect_count > max_redirects
+          uri = URI.parse(response["location"])
+        else
+          raise "Download failed: HTTP #{response.code} #{response.message}"
+        end
       end
     end
   end
