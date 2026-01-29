@@ -6,6 +6,7 @@ require_relative "workflow/plan_generator"
 require_relative "workflow/runtime"
 require_relative "workflow/storage"
 require_relative "workflow/confidence_tracker"
+require_relative "workflow/trigger_manager"
 require_relative "workflow/extractors/pdf"
 require_relative "workflow/extractors/csv"
 

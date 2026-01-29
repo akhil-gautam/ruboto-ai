@@ -994,6 +994,15 @@ module Ruboto
           created_at TEXT DEFAULT (datetime('now')),
           FOREIGN KEY (workflow_id) REFERENCES user_workflows(id)
         );
+
+        CREATE TABLE IF NOT EXISTS trigger_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workflow_id INTEGER NOT NULL,
+          trigger_type TEXT NOT NULL,
+          trigger_data TEXT,
+          triggered_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (workflow_id) REFERENCES user_workflows(id)
+        );
       SQL
 
       run_sql(schema)
@@ -1256,6 +1265,7 @@ module Ruboto
           #{BOLD}/workflows#{RESET} #{DIM}list saved workflows#{RESET}
           #{BOLD}/run#{RESET}      #{DIM}run a workflow (/run <name>)#{RESET}
           #{BOLD}/trust#{RESET}    #{DIM}view/adjust step confidence (/trust <name> [step] [0-100])#{RESET}
+          #{BOLD}/schedule#{RESET} #{DIM}manage workflow schedules (/schedule list|enable|disable|status)#{RESET}
       HELP
     end
 
@@ -1567,6 +1577,16 @@ module Ruboto
             next
           end
 
+          if user_input.start_with?("/schedule")
+            args = user_input.sub("/schedule", "").strip.split(/\s+/)
+            if args.empty?
+              schedule_cli("list")
+            else
+              schedule_cli(args[0], args[1])
+            end
+            next
+          end
+
           # Save to history
           Readline::HISTORY << user_input
           save_message("user", user_input, session_id)
@@ -1865,6 +1885,165 @@ module Ruboto
         puts "    #{DIM}#{wf[:description][0, 60]}#{wf[:description].length > 60 ? '...' : ''}#{RESET}"
         puts "    Trigger: #{wf[:trigger_type]} | Runs: #{wf[:run_count]} | Confidence: #{conf_color}#{confidence}%#{RESET}"
         puts
+      end
+    end
+
+    def schedule_cli(action, workflow_name = nil)
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      case action.to_s.downcase
+      when "list"
+        show_scheduled_workflows
+      when "status"
+        show_schedule_status
+      when "enable"
+        toggle_workflow_schedule(workflow_name, true)
+      when "disable"
+        toggle_workflow_schedule(workflow_name, false)
+      when "check"
+        check_and_run_due_workflows
+      else
+        puts "#{RED}Unknown action: #{action}#{RESET}"
+        puts "#{DIM}Usage: /schedule list|status|enable|disable|check [workflow-name]#{RESET}"
+      end
+    end
+
+    def show_scheduled_workflows
+      workflows = Workflow::Storage.list_workflows
+      scheduled = workflows.select { |wf| wf[:trigger_type] != "manual" }
+
+      if scheduled.empty?
+        puts "#{DIM}No scheduled workflows.#{RESET}"
+        puts "Create one with: /workflow \"Every Friday at 5pm, do something\""
+        return
+      end
+
+      puts "#{CYAN}Scheduled Workflows:#{RESET}\n\n"
+
+      scheduled.each do |wf|
+        full_wf = Workflow::Storage.load_workflow(wf[:id])
+        trigger_config = full_wf[:trigger_config] || {}
+
+        status = wf[:enabled] ? "#{GREEN}enabled#{RESET}" : "#{RED}disabled#{RESET}"
+        trigger_desc = format_trigger_description(wf[:trigger_type], trigger_config)
+
+        puts "  #{BOLD}#{wf[:name]}#{RESET} [#{status}]"
+        puts "    #{DIM}#{wf[:description][0, 50]}#{wf[:description].length > 50 ? '...' : ''}#{RESET}"
+        puts "    #{CYAN}Trigger:#{RESET} #{trigger_desc}"
+
+        # Show last run
+        manager = Workflow::TriggerManager.new
+        history = manager.get_trigger_history(wf[:id], 1)
+        if history.any?
+          puts "    #{DIM}Last triggered: #{history.first[:triggered_at]}#{RESET}"
+        end
+        puts
+      end
+    end
+
+    def show_schedule_status
+      manager = Workflow::TriggerManager.new
+      now = Time.now
+
+      puts "#{CYAN}Schedule Status:#{RESET}\n\n"
+      puts "  Current time: #{now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+      puts
+
+      # Check for due workflows
+      due = manager.get_due_workflows(now)
+      if due.any?
+        puts "  #{YELLOW}Workflows due to run:#{RESET}"
+        due.each { |wf| puts "    • #{wf[:name]}" }
+      else
+        puts "  #{GREEN}No workflows due right now.#{RESET}"
+      end
+      puts
+
+      # Show next scheduled runs
+      puts "  #{DIM}Use '/schedule check' to run due workflows manually.#{RESET}"
+    end
+
+    def toggle_workflow_schedule(name, enabled)
+      unless name
+        puts "#{RED}Workflow name required.#{RESET}"
+        puts "#{DIM}Usage: /schedule #{enabled ? 'enable' : 'disable'} <workflow-name>#{RESET}"
+        return
+      end
+
+      workflow = Workflow::Storage.load_workflow_by_name(name)
+      unless workflow
+        puts "#{RED}Workflow '#{name}' not found.#{RESET}"
+        return
+      end
+
+      sql = "UPDATE user_workflows SET enabled = #{enabled ? 1 : 0}, updated_at = datetime('now') WHERE id = #{workflow[:id]};"
+      Ruboto.run_sql(sql)
+
+      action = enabled ? "enabled" : "disabled"
+      puts "#{GREEN}✓#{RESET} Workflow '#{name}' #{action}."
+    end
+
+    def check_and_run_due_workflows
+      manager = Workflow::TriggerManager.new
+      now = Time.now
+
+      due = manager.get_due_workflows(now)
+
+      if due.empty?
+        puts "#{DIM}No workflows due to run.#{RESET}"
+        return
+      end
+
+      puts "#{CYAN}Found #{due.length} workflow(s) due to run:#{RESET}\n\n"
+
+      due.each do |wf|
+        puts "#{BOLD}Running: #{wf[:name]}#{RESET}"
+
+        # Record trigger execution
+        manager.record_trigger(wf[:id], :schedule, { triggered_at: now.to_s })
+
+        # Run the workflow
+        run_workflow_cli(wf[:name])
+        puts
+      end
+    end
+
+    def format_trigger_description(trigger_type, config)
+      config = config.transform_keys(&:to_sym) rescue config
+
+      case trigger_type.to_s
+      when "schedule"
+        freq = config[:frequency] || config["frequency"]
+        hour = config[:hour] || config["hour"]
+        day = config[:day_of_week] || config["day_of_week"]
+
+        time_str = hour ? "#{hour}:#{(config[:minute] || 0).to_s.rjust(2, '0')}" : "any time"
+
+        case freq.to_s
+        when "daily"
+          "Daily at #{time_str}"
+        when "weekly"
+          day_name = %w[Sunday Monday Tuesday Wednesday Thursday Friday Saturday][day.to_i] rescue "Unknown"
+          "Every #{day_name} at #{time_str}"
+        when "monthly"
+          "Monthly on day #{config[:day_of_month] || 1} at #{time_str}"
+        else
+          "Schedule: #{freq}"
+        end
+      when "file_watch"
+        path = config[:path] || config["path"] || "?"
+        pattern = config[:pattern] || config["pattern"] || "*"
+        "Watch #{path} for #{pattern}"
+      when "email_match"
+        from = config[:from_pattern] || config["from_pattern"]
+        subject = config[:subject_pattern] || config["subject_pattern"]
+        parts = []
+        parts << "from: #{from}" if from
+        parts << "subject: #{subject}" if subject
+        "Email #{parts.join(', ')}"
+      else
+        trigger_type.to_s.capitalize
       end
     end
 
