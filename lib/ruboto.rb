@@ -1882,6 +1882,19 @@ module Ruboto
       parsed = Workflow::IntentParser.parse(description)
       steps = Workflow::PlanGenerator.generate(parsed)
 
+      # Validate we have executable steps
+      if steps.empty?
+        puts "\n#{RED}✗ Could not generate workflow steps#{RESET}"
+        puts "#{DIM}No sources, transforms, or destinations detected in:#{RESET}"
+        puts "  \"#{description}\"\n\n"
+        puts "#{CYAN}Detected:#{RESET}"
+        puts "  Sources:      #{parsed.sources.empty? ? '(none)' : parsed.sources.map { |s| s[:type] }.join(', ')}"
+        puts "  Transforms:   #{parsed.transforms.empty? ? '(none)' : parsed.transforms.map { |t| t[:type] }.join(', ')}"
+        puts "  Destinations: #{parsed.destinations.empty? ? '(none)' : parsed.destinations.map { |d| d[:type] }.join(', ')}"
+        puts "\n#{DIM}Try rephrasing with keywords like: 'scrape URL', 'from folder', 'save to filename.csv'#{RESET}"
+        return
+      end
+
       puts "\n#{BOLD}Workflow: #{parsed.name}#{RESET}"
       puts "#{DIM}\"#{description}\"#{RESET}\n\n"
 

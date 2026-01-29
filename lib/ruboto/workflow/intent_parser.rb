@@ -43,6 +43,10 @@ module Ruboto
         sources << { type: :local_files, hint: "pdf" } if description =~ /pdf|invoice|receipt/i
         sources << { type: :email, hint: $1 } if description =~ /email.*from\s+(\S+)/i
         sources << { type: :web, hint: $1 } if description =~ /(?:from|on|in)\s+([\w.-]+\.com)/i
+        # Direct URLs with action verbs (scrape/open/visit/fetch)
+        sources << { type: :web, hint: $1 } if description =~ /(?:scrape|open|visit|go\s+to|fetch|get)\s+(?:the\s+)?(?:https?:\/\/)?([^\s]+\.[a-z]{2,}[^\s]*)/i
+        # Any URL with https:// prefix
+        sources << { type: :web, hint: $1 } if description =~ /(https?:\/\/[^\s]+)/i && sources.none? { |s| s[:type] == :web }
         sources
       end
 
@@ -58,6 +62,10 @@ module Ruboto
         destinations = []
         destinations << { type: :file, path: $1 } if description =~ /(?:add|append|save|write).+?(?:to|into)\s+([~\/]?[\w\/.-]+\.\w+)/i
         destinations << { type: :file, path: $1 } if description =~ /(\S+\.csv|\S+\.xlsx)/i
+        # Generic file type references ("in a CSV", "to a spreadsheet", "as JSON")
+        destinations << { type: :file, path: "~/Desktop/output.csv" } if description =~ /(?:save|write|export|store).+?(?:in|to|as)\s+(?:a\s+)?csv/i && destinations.empty?
+        destinations << { type: :file, path: "~/Desktop/output.json" } if description =~ /(?:save|write|export|store).+?(?:in|to|as)\s+(?:a\s+)?json/i && destinations.empty?
+        destinations << { type: :file, path: "~/Desktop/output.csv" } if description =~ /(?:save|write|export|store).+?(?:in|to|as)\s+(?:a\s+)?spreadsheet/i && destinations.empty?
         destinations << { type: :web_form, hint: $1 } if description =~ /fill\s+(?:out\s+)?(?:the\s+)?(\S+)\s+form/i
         destinations << { type: :web_form, hint: $1 } if description =~ /(?:on|in)\s+(workday|salesforce|quickbooks)/i
         destinations << { type: :email, hint: $1 } if description =~ /email\s+(?:it\s+)?to\s+(\S+)/i
