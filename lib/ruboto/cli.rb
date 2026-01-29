@@ -19,6 +19,9 @@ module Ruboto
         --uninstall-daemon         Remove daemon plist
         --queue                    Show pending action queue
         --cancel-action ID         Cancel a pending/notified action
+        --workflow "description"   Create a new workflow interactively
+        --workflows                List all saved workflows
+        --run-workflow <name>      Run a saved workflow by name
         --help                     Show this help
     TEXT
 
@@ -70,6 +73,32 @@ module Ruboto
         end
         Ruboto.ensure_db_exists
         Ruboto.cancel_action(action_id.to_i)
+
+      when "--workflow"
+        description = ARGV.shift
+        if description.nil? || description.empty?
+          puts "Usage: ruboto-ai --workflow \"description of your workflow\""
+          exit 1
+        end
+        require_relative "ruboto/workflow"
+        Ruboto.create_workflow_interactive(description)
+        exit 0
+
+      when "--workflows"
+        require_relative "ruboto/workflow"
+        Ruboto.list_workflows_cli
+        exit 0
+
+      when "--run-workflow"
+        name = ARGV.shift
+        if name.nil? || name.empty?
+          puts "Usage: ruboto-ai --run-workflow <workflow-name>"
+          exit 1
+        end
+        require_relative "ruboto/workflow"
+        Ruboto.run_workflow_cli(name)
+        exit 0
+
       else
         $stderr.puts "Unknown option: #{argv.first}"
         $stderr.puts USAGE

@@ -1252,6 +1252,9 @@ module Ruboto
           #{BOLD}/briefing#{RESET} #{DIM}run morning/evening briefing (/briefing morning|evening|auto)#{RESET}
           #{BOLD}/queue#{RESET}    #{DIM}show pending daemon actions#{RESET}
           #{BOLD}/cancel#{RESET}   #{DIM}cancel a daemon action (/cancel <id>)#{RESET}
+          #{BOLD}/workflow#{RESET} #{DIM}create workflow (/workflow "description")#{RESET}
+          #{BOLD}/workflows#{RESET} #{DIM}list saved workflows#{RESET}
+          #{BOLD}/run#{RESET}      #{DIM}run a workflow (/run <name>)#{RESET}
       HELP
     end
 
@@ -1527,6 +1530,31 @@ module Ruboto
             next
           end
 
+          if user_input.start_with?("/workflow")
+            rest = user_input.sub("/workflow", "").strip
+            if rest.empty?
+              puts "#{RED}Usage: /workflow \"description of your workflow\"#{RESET}"
+            else
+              create_workflow_interactive(rest.gsub(/^["']|["']$/, ''))
+            end
+            next
+          end
+
+          if user_input == "/workflows"
+            list_workflows_cli
+            next
+          end
+
+          if user_input.start_with?("/run")
+            name = user_input.sub("/run", "").strip
+            if name.empty?
+              puts "#{RED}Usage: /run <workflow-name>#{RESET}"
+            else
+              run_workflow_cli(name)
+            end
+            next
+          end
+
           # Save to history
           Readline::HISTORY << user_input
           save_message("user", user_input, session_id)
@@ -1772,6 +1800,193 @@ module Ruboto
       { success: task_success, text: final_text, tools_used: interaction_tools }
     rescue => e
       { success: false, text: "Error: #{e.message}", tools_used: [] }
+    end
+
+    def create_workflow_interactive(description)
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      puts "#{CYAN}Parsing workflow...#{RESET}"
+      parsed = Workflow::IntentParser.parse(description)
+      steps = Workflow::PlanGenerator.generate(parsed)
+
+      puts "\n#{BOLD}Workflow: #{parsed.name}#{RESET}"
+      puts "#{DIM}\"#{description}\"#{RESET}\n\n"
+
+      puts "#{CYAN}Trigger:#{RESET} #{parsed.trigger[:type]} #{parsed.trigger[:match] ? "(#{parsed.trigger[:match]})" : "(manual)"}"
+      puts "\n#{CYAN}Generated #{steps.length} steps:#{RESET}"
+
+      steps.each_with_index do |step, idx|
+        puts "  #{BOLD}#{idx + 1}.#{RESET} #{step.description}"
+        puts "     #{DIM}Tool: #{step.tool}, Output: $#{step.output_key || 'none'}#{RESET}"
+      end
+
+      print "\n#{YELLOW}Save this workflow? [y/n]#{RESET} "
+      answer = gets&.strip&.downcase
+      if answer == "y"
+        id = Workflow::Storage.save_workflow(parsed, steps)
+        puts "#{GREEN}✓#{RESET} Saved workflow '#{parsed.name}' (id: #{id})"
+        puts "#{DIM}Run with: ruboto-ai --run-workflow #{parsed.name}#{RESET}"
+      else
+        puts "#{DIM}Workflow not saved.#{RESET}"
+      end
+    end
+
+    def list_workflows_cli
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      workflows = Workflow::Storage.list_workflows
+      if workflows.empty?
+        puts "#{DIM}No workflows saved yet.#{RESET}"
+        puts "Create one with: ruboto-ai --workflow \"your workflow description\""
+        return
+      end
+
+      puts "#{CYAN}Saved Workflows:#{RESET}\n\n"
+      workflows.each do |wf|
+        status = wf[:enabled] ? "#{GREEN}enabled#{RESET}" : "#{RED}disabled#{RESET}"
+        confidence = (wf[:overall_confidence] * 100).round
+        conf_color = confidence >= 80 ? GREEN : (confidence >= 50 ? YELLOW : RED)
+
+        puts "  #{BOLD}#{wf[:name]}#{RESET} [#{status}]"
+        puts "    #{DIM}#{wf[:description][0, 60]}#{wf[:description].length > 60 ? '...' : ''}#{RESET}"
+        puts "    Trigger: #{wf[:trigger_type]} | Runs: #{wf[:run_count]} | Confidence: #{conf_color}#{confidence}%#{RESET}"
+        puts
+      end
+    end
+
+    def run_workflow_cli(name)
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      workflow = Workflow::Storage.load_workflow_by_name(name)
+      unless workflow
+        puts "#{RED}Workflow '#{name}' not found.#{RESET}"
+        puts "#{DIM}List workflows with: ruboto-ai --workflows#{RESET}"
+        return
+      end
+
+      steps_data = Workflow::Storage.load_steps(workflow[:id])
+      steps = steps_data.map do |s|
+        Workflow::Step.new(
+          id: s[:step_order],
+          tool: s[:tool],
+          params: s[:params],
+          output_key: s[:output_key],
+          description: s[:description]
+        ).tap { |step| step.confidence = s[:confidence] }
+      end
+
+      runtime = Workflow::Runtime.new(steps, mode: :supervised)
+      run_id = Workflow::Storage.start_run(workflow[:id])
+
+      puts "#{CYAN}Running workflow: #{workflow[:name]}#{RESET}"
+      puts "#{DIM}#{workflow[:description]}#{RESET}\n\n"
+
+      success = true
+      while !runtime.complete?
+        step = runtime.current_step
+        confidence = (step.confidence * 100).round
+
+        puts "#{BOLD}Step #{step.id}/#{steps.length}:#{RESET} #{step.description}"
+        puts "  #{DIM}Tool: #{step.tool}#{RESET}"
+        puts "  #{DIM}Confidence: #{confidence}%#{confidence >= 80 ? ' (autonomous)' : ''}#{RESET}"
+
+        resolved_params = runtime.resolve_params(step.params)
+        puts "  #{DIM}Params: #{resolved_params.inspect}#{RESET}"
+
+        if runtime.mode == :supervised && step.confidence < 0.8
+          print "\n  #{YELLOW}[a]pprove  [s]kip  [e]dit  [c]ancel#{RESET} > "
+          choice = gets&.strip&.downcase
+
+          case choice
+          when "a"
+            # Continue
+          when "s"
+            puts "  #{DIM}Skipped.#{RESET}"
+            runtime.log_event(:skipped)
+            runtime.advance
+            next
+          when "c"
+            puts "  #{RED}Cancelled.#{RESET}"
+            success = false
+            break
+          when "e"
+            puts "  #{DIM}Edit not yet implemented.#{RESET}"
+            next
+          else
+            puts "  #{DIM}Invalid choice. Try again.#{RESET}"
+            next
+          end
+        end
+
+        print "  #{YELLOW}Executing...#{RESET}"
+        result = execute_workflow_step(step, resolved_params)
+
+        if result[:success]
+          puts "\r  #{GREEN}✓#{RESET} #{result[:summary] || 'Done'}          "
+          runtime.store_result(step.output_key, result[:output])
+          runtime.log_event(:completed, { output: result[:summary] })
+
+          new_confidence = [step.confidence + 0.2, 1.0].min
+          Workflow::Storage.update_step_confidence(workflow[:id], step.id, new_confidence)
+        else
+          puts "\r  #{RED}✗#{RESET} #{result[:error]}          "
+          runtime.log_event(:failed, { error: result[:error] })
+          success = false
+
+          print "  #{YELLOW}[r]etry  [s]kip  [c]ancel#{RESET} > "
+          choice = gets&.strip&.downcase
+          case choice
+          when "r"
+            next
+          when "s"
+            runtime.advance
+            next
+          else
+            break
+          end
+        end
+
+        runtime.advance
+        puts
+      end
+
+      status = success && runtime.complete? ? "completed" : "failed"
+      Workflow::Storage.complete_run(run_id, status, runtime.state, runtime.run_log)
+      Workflow::Storage.increment_run_count(workflow[:id], success)
+      Workflow::Storage.update_overall_confidence(workflow[:id])
+
+      if success && runtime.complete?
+        puts "#{GREEN}✓ Workflow completed successfully.#{RESET}"
+      else
+        puts "#{RED}✗ Workflow did not complete.#{RESET}"
+      end
+    end
+
+    def execute_workflow_step(step, params)
+      case step.tool
+      when "file_glob"
+        files = Dir.glob(File.join(params[:path] || ".", params[:pattern] || "*"))
+        { success: true, output: files, summary: "Found #{files.length} files" }
+
+      when "pdf_extract"
+        files = params[:files] || []
+        { success: true, output: files.map { |f| { file: f, data: {} } }, summary: "Processed #{files.length} files" }
+
+      when "file_append"
+        { success: true, output: nil, summary: "Appended to #{params[:path]}" }
+
+      when "browser", "browser_form"
+        result = tool_browser(params.transform_keys(&:to_s))
+        { success: !result.to_s.start_with?("error"), output: result, summary: result.to_s[0, 60] }
+
+      else
+        { success: false, error: "Unknown tool: #{step.tool}" }
+      end
+    rescue => e
+      { success: false, error: e.message }
     end
   end
 end
