@@ -1266,6 +1266,10 @@ module Ruboto
           #{BOLD}/run#{RESET}      #{DIM}run a workflow (/run <name>)#{RESET}
           #{BOLD}/trust#{RESET}    #{DIM}view/adjust step confidence (/trust <name> [step] [0-100])#{RESET}
           #{BOLD}/schedule#{RESET} #{DIM}manage workflow schedules (/schedule list|enable|disable|status)#{RESET}
+          #{BOLD}/history#{RESET}  #{DIM}view workflow run history (/history [name] [limit])#{RESET}
+          #{BOLD}/export#{RESET}   #{DIM}export workflow to file (/export <name> [file])#{RESET}
+          #{BOLD}/import#{RESET}   #{DIM}import workflow from file (/import <file>)#{RESET}
+          #{BOLD}/audit#{RESET}    #{DIM}view audit logs (/audit <name> [run-id])#{RESET}
       HELP
     end
 
@@ -1583,6 +1587,42 @@ module Ruboto
               schedule_cli("list")
             else
               schedule_cli(args[0], args[1])
+            end
+            next
+          end
+
+          if user_input.start_with?("/history")
+            args = user_input.sub("/history", "").strip.split(/\s+/)
+            history_cli(args[0], args[1]&.to_i)
+            next
+          end
+
+          if user_input.start_with?("/export")
+            args = user_input.sub("/export", "").strip.split(/\s+/)
+            if args.empty?
+              puts "#{RED}Usage: /export <workflow-name> [file-path]#{RESET}"
+            else
+              export_cli(args[0], args[1])
+            end
+            next
+          end
+
+          if user_input.start_with?("/import")
+            file_path = user_input.sub("/import", "").strip
+            if file_path.empty?
+              puts "#{RED}Usage: /import <file-path>#{RESET}"
+            else
+              import_cli(file_path)
+            end
+            next
+          end
+
+          if user_input.start_with?("/audit")
+            args = user_input.sub("/audit", "").strip.split(/\s+/)
+            if args.empty?
+              puts "#{RED}Usage: /audit <workflow-name> [run-id]#{RESET}"
+            else
+              audit_cli(args[0], args[1])
             end
             next
           end
@@ -2044,6 +2084,217 @@ module Ruboto
         "Email #{parts.join(', ')}"
       else
         trigger_type.to_s.capitalize
+      end
+    end
+
+    def history_cli(workflow_name = nil, limit = nil)
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      limit ||= 10
+
+      if workflow_name
+        # Show history for specific workflow
+        workflow = Workflow::Storage.load_workflow_by_name(workflow_name)
+        unless workflow
+          puts "#{RED}Workflow '#{workflow_name}' not found.#{RESET}"
+          return
+        end
+
+        runs = Workflow::History.get_runs(workflow[:id], limit: limit, include_log: true)
+        stats = Workflow::History.get_stats(workflow[:id])
+
+        puts "#{CYAN}History: #{workflow[:name]}#{RESET}\n\n"
+
+        # Show stats
+        puts "  #{BOLD}Statistics:#{RESET}"
+        puts "    Total runs: #{stats[:total_runs]} | Success: #{GREEN}#{stats[:successful]}#{RESET} | Failed: #{RED}#{stats[:failed]}#{RESET}"
+        puts "    Success rate: #{stats[:success_rate]}% | Avg duration: #{stats[:avg_duration_seconds]}s"
+        puts
+
+        if runs.empty?
+          puts "  #{DIM}No run history yet.#{RESET}"
+          return
+        end
+
+        puts "  #{BOLD}Recent Runs:#{RESET}"
+        runs.each do |run|
+          status_color = run[:status] == "completed" ? GREEN : (run[:status] == "failed" ? RED : YELLOW)
+          status_icon = run[:status] == "completed" ? "✓" : (run[:status] == "failed" ? "✗" : "○")
+
+          puts "    #{status_color}#{status_icon}#{RESET} #{run[:started_at]} - #{run[:status]}"
+          puts "      #{DIM}Duration: #{run[:duration_seconds] || '?'}s | Steps: #{(run[:log] || []).length}#{RESET}"
+
+          # Show errors if any
+          errors = (run[:log] || []).select { |e| e[:event]&.to_s == "failed" || e[:error] }
+          errors.each do |err|
+            puts "      #{RED}Error: #{err[:error] || err[:data]&.dig(:error) || 'Unknown'}#{RESET}"
+          end
+        end
+      else
+        # Show all recent runs
+        runs = Workflow::History.get_all_runs(limit: limit, include_log: false)
+
+        if runs.empty?
+          puts "#{DIM}No workflow history yet.#{RESET}"
+          return
+        end
+
+        puts "#{CYAN}Recent Workflow Runs:#{RESET}\n\n"
+
+        runs.each do |run|
+          status_color = run[:status] == "completed" ? GREEN : (run[:status] == "failed" ? RED : YELLOW)
+          status_icon = run[:status] == "completed" ? "✓" : (run[:status] == "failed" ? "✗" : "○")
+
+          puts "  #{status_color}#{status_icon}#{RESET} #{BOLD}#{run[:workflow_name]}#{RESET}"
+          puts "    #{run[:started_at]} - #{run[:status]} (#{run[:duration_seconds] || '?'}s)"
+        end
+
+        puts "\n#{DIM}Use /history <workflow-name> for detailed history.#{RESET}"
+      end
+    end
+
+    def export_cli(workflow_name, file_path = nil)
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      workflow = Workflow::Storage.load_workflow_by_name(workflow_name)
+      unless workflow
+        puts "#{RED}Workflow '#{workflow_name}' not found.#{RESET}"
+        return
+      end
+
+      file_path ||= "#{workflow_name.gsub(/[^a-zA-Z0-9_-]/, '_')}.json"
+      file_path = File.expand_path(file_path)
+
+      if Workflow::ExportImport.export_to_file(workflow[:id], file_path)
+        puts "#{GREEN}✓#{RESET} Exported '#{workflow_name}' to #{file_path}"
+
+        # Show summary
+        data = Workflow::ExportImport.export_workflow(workflow[:id])
+        puts "  #{DIM}#{data[:steps].length} steps, #{data[:run_count]} runs, #{(data[:overall_confidence] * 100).round}% confidence#{RESET}"
+      else
+        puts "#{RED}Failed to export workflow.#{RESET}"
+      end
+    end
+
+    def import_cli(file_path)
+      require_relative "ruboto/workflow"
+      ensure_db_exists
+
+      file_path = File.expand_path(file_path)
+
+      unless File.exist?(file_path)
+        puts "#{RED}File not found: #{file_path}#{RESET}"
+        return
+      end
+
+      workflow_id = Workflow::ExportImport.import_from_file(file_path, rename_on_conflict: true)
+
+      if workflow_id
+        workflow = Workflow::Storage.load_workflow(workflow_id)
+        puts "#{GREEN}✓#{RESET} Imported workflow '#{workflow[:name]}'"
+        puts "  #{DIM}#{Workflow::Storage.load_steps(workflow_id).length} steps#{RESET}"
+        puts "  #{DIM}Run with: /run #{workflow[:name]}#{RESET}"
+      else
+        puts "#{RED}Failed to import workflow. Check file format.#{RESET}"
+      end
+    end
+
+    def audit_cli(workflow_name, run_id = nil)
+      require_relative "ruboto/workflow"
+
+      if run_id
+        # Show specific run details
+        show_audit_run(workflow_name, run_id)
+      else
+        # Show audit summary for workflow
+        show_audit_summary(workflow_name)
+      end
+    end
+
+    def show_audit_summary(workflow_name)
+      logs = Workflow::AuditLogger.list_logs(workflow_name)
+
+      if logs.empty?
+        puts "#{DIM}No audit logs found for '#{workflow_name}'.#{RESET}"
+        puts "#{DIM}Logs are created when workflows run.#{RESET}"
+        return
+      end
+
+      puts "#{CYAN}Audit Logs: #{workflow_name}#{RESET}\n\n"
+
+      summary = Workflow::AuditLogger.get_summary(workflow_name)
+
+      summary.each do |log|
+        status_color = log[:status] == "completed" ? GREEN : (log[:status] == "failed" ? RED : YELLOW)
+        status_icon = log[:status] == "completed" ? "✓" : (log[:status] == "failed" ? "✗" : "○")
+
+        puts "  #{status_color}#{status_icon}#{RESET} Run #{log[:run_id]} - #{log[:started_at]}"
+        puts "    #{DIM}Status: #{log[:status]} | Duration: #{log[:duration] || '?'}s | Corrections: #{log[:corrections]}#{RESET}"
+        puts "    #{DIM}Log: #{log[:log_file]}#{RESET}"
+        puts
+      end
+
+      puts "#{DIM}Use /audit #{workflow_name} <run-id> for detailed view.#{RESET}"
+    end
+
+    def show_audit_run(workflow_name, run_id)
+      logs = Workflow::AuditLogger.list_logs(workflow_name)
+      log_file = logs.find { |f| f.include?("run_#{run_id}_") }
+
+      unless log_file
+        puts "#{RED}Audit log for run #{run_id} not found.#{RESET}"
+        return
+      end
+
+      data = Workflow::AuditLogger.read_log(log_file)
+      unless data
+        puts "#{RED}Failed to read audit log.#{RESET}"
+        return
+      end
+
+      puts "#{CYAN}Audit Log: #{workflow_name} - Run #{run_id}#{RESET}\n\n"
+      puts "  #{DIM}File: #{File.basename(log_file)}#{RESET}\n\n"
+
+      data[:events].each do |event|
+        case event[:type]
+        when "workflow_start"
+          puts "  #{BOLD}[START]#{RESET} #{event[:timestamp]}"
+          puts "    Trigger: #{event[:data][:trigger_type] || 'manual'}"
+
+        when "step_start"
+          puts "  #{CYAN}[STEP #{event[:data][:step_id]}]#{RESET} #{event[:data][:description]}"
+          puts "    Tool: #{event[:data][:tool]} | Confidence: #{(event[:data][:confidence] * 100).round}%"
+
+        when "step_result"
+          if event[:data][:success]
+            puts "    #{GREEN}✓#{RESET} #{event[:data][:summary]}"
+          else
+            puts "    #{RED}✗#{RESET} #{event[:data][:error]}"
+          end
+
+        when "user_correction"
+          puts "    #{YELLOW}[CORRECTION]#{RESET} #{event[:data][:correction_type]}"
+          puts "      #{DIM}#{event[:data][:original]} → #{event[:data][:corrected]}#{RESET}"
+
+        when "confidence_change"
+          change = event[:data][:change]
+          color = change >= 0 ? GREEN : RED
+          puts "    #{color}[CONFIDENCE]#{RESET} #{(event[:data][:old_confidence] * 100).round}% → #{(event[:data][:new_confidence] * 100).round}%"
+
+        when "user_action"
+          puts "    #{YELLOW}[USER]#{RESET} #{event[:data][:action]}"
+
+        when "workflow_complete"
+          status_color = event[:data][:status] == "completed" ? GREEN : RED
+          puts "\n  #{BOLD}[COMPLETE]#{RESET} #{status_color}#{event[:data][:status]}#{RESET}"
+          puts "    Duration: #{event[:data][:duration_seconds]}s"
+          puts "    Steps: #{event[:data][:steps_successful]}/#{event[:data][:steps_executed]} successful"
+
+        when "error"
+          puts "    #{RED}[ERROR]#{RESET} #{event[:data][:context]}: #{event[:data][:error_message]}"
+        end
       end
     end
 
